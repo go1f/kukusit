@@ -1,6 +1,6 @@
 import AppKit
 
-// Keep the supplied artwork intact; pad its small aspect-ratio difference to a square.
+// Preserve the supplied artwork and alpha; pad to a transparent square.
 let arguments = CommandLine.arguments
 guard arguments.count == 3,
       let source = NSImage(contentsOfFile: arguments[1]) else {
@@ -19,8 +19,7 @@ for points in [16, 32, 128, 256, 512] {
         NSGraphicsContext.current = context
         context.imageInterpolation = .high
         let canvas = NSRect(x: 0, y: 0, width: pixels, height: pixels)
-        NSColor.white.setFill()
-        canvas.fill()
+        context.cgContext.clear(canvas)
         let ratio = CGFloat(pixels) / max(source.size.width, source.size.height)
         let size = NSSize(width: source.size.width * ratio, height: source.size.height * ratio)
         source.draw(in: NSRect(x: (canvas.width - size.width) / 2,

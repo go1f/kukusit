@@ -1,7 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="230 40 525 910" fill="none">
-  <title>坐姿小兽 · 白色菜单栏图标 · 参考比例版</title>
-  <g stroke="#fff" stroke-width="29" stroke-linecap="round" stroke-linejoin="round">
-    <!-- Preserve the reference's tall overall proportion instead of widening the head to fill the square. -->
+  <title>坐姿小兽 · 白色实心菜单栏图标 · 五官与背部精修</title>
+  <defs>
+    <mask id="character-cutouts" maskUnits="userSpaceOnUse" x="230" y="40" width="525" height="910">
+      <rect x="230" y="40" width="525" height="910" fill="#fff"/>
+      <circle cx="613" cy="255" r="27" fill="#000"/>
+      <path d="M679 475C690 471 698 477 699 486C700 498 693 505 682 505C672 505 668 499 670 489C670 481 673 477 679 475Z" fill="#000"/>
+      <g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M503 91 525 137" stroke-width="23"/>
+        <path d="M353 591C423 608 536 612 636 591" stroke-width="22"/>
+        <path d="M431 675c-4 31 5 72 19 76 19-5 28-43 27-69" stroke-width="34"/>
+
+      </g>
+      <path d="M622 535H681V548H622Z" fill="#000"/>
+    </mask>
+  </defs>
+  <g fill="#fff" stroke="#fff" stroke-width="17" stroke-linecap="round" stroke-linejoin="round" mask="url(#character-cutouts)">
+    <!-- Broad white masses, with facial details and the arm knocked out to transparency. -->
     <path d="M420 146 487 58 502 90 537 65 556 115 563 142
              C606 141 644 160 673 187
              C706 219 720 268 725 320
@@ -14,29 +28,23 @@
              C240 445 237 409 241 368
              L243 325C257 278 279 222 312 188
              C341 165 379 151 420 146Z"/>
-    <path d="M502 90 525 139"/>
-    <!-- Sitting body and small dangling foot follow the source silhouette. -->
     <path d="M347 584
-             C337 609 359 636 365 659
-             C375 691 364 722 355 751
-             C345 779 358 797 379 807
-             C419 823 469 823 521 816
+             C337 601 350 628 361 653
+             C373 678 372 706 364 731
+             C359 748 350 763 352 779
+             C353 796 367 805 384 812
+             C420 824 472 825 521 817
              C539 813 548 830 555 849
              L568 866C585 877 604 868 603 845
              L611 845C625 847 629 837 629 821
              C631 800 625 785 618 770
              C643 753 659 710 665 679
-             C671 644 654 608 642 581"/>
-    <path d="M431 674c-5 29 5 74 19 78 19-5 29-45 27-72"/>
-    <!-- Chair back is tucked under the rear of the head, as in the reference. -->
+             C671 644 654 608 642 581Z"/>
     <path d="M282 614C268 635 266 678 267 715
              L273 746C287 760 310 758 322 744
              L326 656C330 629 311 610 294 610Z"/>
-    <path d="M285 755 288 925 314 925 316 845"/>
-    <path d="M324 792c-21-8-28 20-9 39 17 15 58 17 83 15l146 1"/>
-    <path d="M540 847 544 926 568 922 567 867"/>
-    <path d="M626 541 668 542"/>
+    <path d="M283 742h37l-3 181h-33Z"/>
+    <path d="M324 792c-21-8-28 20-9 39 17 15 58 17 83 15l146 1v-35H379Z"/>
+    <path d="M536 835h38l-3 88h-33Z"/>
   </g>
-  <circle cx="614" cy="255" r="19" fill="#fff"/>
-  <circle cx="687" cy="488" r="15" fill="#fff"/>
 </svg>

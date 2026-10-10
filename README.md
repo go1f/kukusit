@@ -4,7 +4,7 @@
 
 ## 安装
 
-从本仓库的 GitHub Releases 下载 `Kukusit-0.4.1-macOS-arm64.zip`，解压后把 `Kukusit.app` 拖到“应用程序”。运行时只显示菜单栏图标。
+从本仓库的 GitHub Releases 下载 `Kukusit-0.4.2-macOS-arm64.zip`，解压后把 `Kukusit.app` 拖到“应用程序”。运行时只显示菜单栏图标。
 
 发行包包含原生界面、本地 MediaPipe 推理运行时和模型，**无需安装 Python、无需克隆项目，也不需要联网推理**。目标为 Apple Silicon Mac，包括 M5 / macOS 27；当前已在 M2 / macOS 27 验证，尚未在 M5 实机测试。
 
@@ -53,6 +53,7 @@ release/Kukusit.app/Contents/MacOS/PostureDiagnostics --bridge-check
 
 - [v0.4 发布与布局更新](docs/release-v0.4.md)
 - [v0.4.1 应用与菜单栏图标](docs/release-v0.4.1.md)
+- [v0.4.2 透明应用图标与实心菜单栏图标](docs/release-v0.4.2.md)
 - [原生常驻设计 v0.3](docs/monitor-v0.3.md)
 - [诊断原型 v0.2](docs/mvp-v0.2.md)
 - [初版架构](docs/architecture-v0.1.md)
