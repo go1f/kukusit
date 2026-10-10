@@ -1,0 +1,10 @@
+.build/
+.DS_Store
+dist/
+.swiftpm/
+.venv-pose/
+.local/
+__pycache__/
+docs/validation/
+*.spec
+release/
