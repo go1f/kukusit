@@ -23,7 +23,12 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         super.init()
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem = item
-        item.button?.image = NSImage(systemSymbolName: "figure.seated.side", accessibilityDescription: "坐姿监测")
+        let statusImage = Bundle.main.url(forResource: "StatusIcon", withExtension: "svg")
+            .flatMap { NSImage(contentsOf: $0) }
+            ?? NSImage(systemSymbolName: "figure.seated.side", accessibilityDescription: "坐姿监测")
+        statusImage?.size = NSSize(width: 20, height: 20)
+        statusImage?.accessibilityDescription = "坐姿监测"
+        item.button?.image = statusImage
         item.button?.image?.isTemplate = true
         item.button?.target = self; item.button?.action = #selector(togglePopover)
         item.button?.toolTip = "坐姿监测 · 点击查看状态，⌥点击切换画中画"

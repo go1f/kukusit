@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="230 40 525 910" fill="none">
+  <title>坐姿小兽 · 白色菜单栏图标 · 参考比例版</title>
+  <g stroke="#fff" stroke-width="29" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Preserve the reference's tall overall proportion instead of widening the head to fill the square. -->
+    <path d="M420 146 487 58 502 90 537 65 556 115 563 142
+             C606 141 644 160 673 187
+             C706 219 720 268 725 320
+             C740 400 736 482 691 544
+             C675 568 644 581 608 588
+             C579 592 561 598 536 599
+             L475 602C448 603 433 597 417 592
+             C386 592 359 588 333 577
+             C287 552 267 519 252 476
+             C240 445 237 409 241 368
+             L243 325C257 278 279 222 312 188
+             C341 165 379 151 420 146Z"/>
+    <path d="M502 90 525 139"/>
+    <!-- Sitting body and small dangling foot follow the source silhouette. -->
+    <path d="M347 584
+             C337 609 359 636 365 659
+             C375 691 364 722 355 751
+             C345 779 358 797 379 807
+             C419 823 469 823 521 816
+             C539 813 548 830 555 849
+             L568 866C585 877 604 868 603 845
+             L611 845C625 847 629 837 629 821
+             C631 800 625 785 618 770
+             C643 753 659 710 665 679
+             C671 644 654 608 642 581"/>
+    <path d="M431 674c-5 29 5 74 19 78 19-5 29-45 27-72"/>
+    <!-- Chair back is tucked under the rear of the head, as in the reference. -->
+    <path d="M282 614C268 635 266 678 267 715
+             L273 746C287 760 310 758 322 744
+             L326 656C330 629 311 610 294 610Z"/>
+    <path d="M285 755 288 925 314 925 316 845"/>
+    <path d="M324 792c-21-8-28 20-9 39 17 15 58 17 83 15l146 1"/>
+    <path d="M540 847 544 926 568 922 567 867"/>
+    <path d="M626 541 668 542"/>
+  </g>
+  <circle cx="614" cy="255" r="19" fill="#fff"/>
+  <circle cx="687" cy="488" r="15" fill="#fff"/>
+</svg>
