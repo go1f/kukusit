@@ -100,7 +100,12 @@ struct ChecksMain {
             ("absolute side turn blocks head-only fallback", suite.testAbsoluteSideTurnCannotUseHeadOnlyFallback),
             ("two Hz still reaches decision", reminders.testTwoHzObservationsStillReachDecision),
             ("confidence and cropping reasons differ", suite.testQualityReasonsSeparateConfidenceAndCropping),
-            ("reference loss and boundary noise", suite.testReferenceLossAndBoundaryNoiseKeepCurrentContext)
+            ("reference loss and boundary noise", suite.testReferenceLossAndBoundaryNoiseKeepCurrentContext),
+            ("4–6 degree head tilt starts timer", reminders.testFourToSixDegreesStartHeadTimer),
+            ("intermediate band is not normal", reminders.testIntermediateBandIsNotNormal),
+            ("3 degrees cannot confirm recovery", reminders.testThreeDegreesCannotConfirmRecovery),
+            ("shoulders never cancel visible head tilt", reminders.testShouldersDoNotCancelVisibleHeadDeviation),
+            ("small shoulder shift never invents head tilt", reminders.testSmallShoulderShiftDoesNotInventHeadTilt)
         ]
         for (name, check) in checks { try check(); print("PASS: \(name)") }
         print("\(checks.count) / \(checks.count) core checks passed")

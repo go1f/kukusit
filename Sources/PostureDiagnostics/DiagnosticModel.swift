@@ -138,6 +138,7 @@ final class DiagnosticModel: ObservableObject {
                 + (monitoringScopeDetail.map { " · " + $0 } ?? "")
         }
         if case .normal = monitorState { return monitoringScopeDetail }
+        if case .slightDeviation = monitorState { return "偏移处于恢复阈值和提醒阈值之间，继续观察。" }
         if case .deviating = monitorState { return monitoringScopeDetail }
         return nil
     }

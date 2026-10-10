@@ -65,7 +65,7 @@ enum DemoFrame {
                                       faceCount: scenario == .away ? 0 : (scenario == .multiplePeople ? 2 : 1),
                                       bodyCount: scenario == .away ? 0 : (scenario == .multiplePeople ? 2 : 1),
                                       faceBox: FaceBox(x: 0.42, y: 0.62, width: 0.16, height: 0.30),
-                                      faceConfidence: 0.98, roll: scenario == .headTilt ? 17.2 : 3.2,
+                                      faceConfidence: 0.98, roll: scenario == .headTilt ? 8.2 : 3.2,
                                       yaw: scenario == .turnedAway ? 50 : 1.8, pitch: -14.0, joints: joints,
                                       faceLandmarks: facePoints)
         return AnalysisPacket(generation: -1, observation: observation, image: image,

@@ -6,9 +6,10 @@ public struct ReminderConfiguration: Equatable, Sendable {
     public var recoverySeconds = 2.0
     public var settleSeconds = 0.5
     public var lossGraceSeconds = 2.0
-    public var headEnterDegrees = 8.0
+    public var headEnterDegrees = 4.0
+    public var headExitDegrees = 2.0
     public var shoulderEnterDegrees = 8.0
-    public var exitDegrees = 5.0
+    public var shoulderExitDegrees = 5.0
     public var maximumGap = 0.5
     public init() {}
 }
@@ -35,6 +36,7 @@ public enum MonitorState: Equatable, Sendable {
     case unknown(String)
     case waiting(String, accumulatedSeconds: Int)
     case normal
+    case slightDeviation
     case candidate(ReminderKind, seconds: Int)
     case recovering(ReminderKind, accumulatedSeconds: Int)
     case deviating(ReminderKind)
@@ -43,6 +45,7 @@ public enum MonitorState: Equatable, Sendable {
         case .inactive: return "监测已暂停"
         case .unknown(let reason), .waiting(let reason, _): return reason
         case .normal: return "姿态接近参考"
+        case .slightDeviation: return "轻微偏离参考"
         case .candidate: return "正在观察持续偏移"
         case .recovering: return "待确认恢复"
         case .deviating: return "持续偏离参考"
@@ -153,9 +156,10 @@ public struct ReminderEngine: Sendable {
         }
         history.append(input)
         history.removeAll { input.timestamp - $0.timestamp > 1.2 }
-        let rawHead = input.shoulderDeviation.map { Geometry.wrapDegrees(input.rollDeviation - $0) } ?? input.rollDeviation
-        let rawNormal = abs(rawHead) <= configuration.exitDegrees
-            && (input.shoulderDeviation.map { abs($0) <= configuration.exitDegrees } ?? true)
+        // Head status uses the same face-to-reference roll shown in the UI.
+        // A similar shoulder lean must not cancel visible head deviation into "normal".
+        let rawNormal = abs(input.rollDeviation) <= configuration.headExitDegrees
+            && (input.shoulderDeviation.map { abs($0) <= configuration.shoulderExitDegrees } ?? true)
         // Show pending recovery immediately; two continuous seconds of real normal samples
         // confirm it. Smoothing must not hide a brief return or count stale normal values.
         if rawNormal, let active = candidate ?? episode,
@@ -184,8 +188,8 @@ public struct ReminderEngine: Sendable {
             ? median(shoulders) : nil
         let head = shoulder.map { Geometry.wrapDegrees(roll - $0) } ?? roll
         let shoulderAvailable = input.shoulderDeviation != nil && shoulder != nil
-        let isNormal = abs(head) <= configuration.exitDegrees
-            && (shoulder.map { abs($0) <= configuration.exitDegrees } ?? true)
+        let isNormal = abs(roll) <= configuration.headExitDegrees
+            && (shoulder.map { abs($0) <= configuration.shoulderExitDegrees } ?? true)
         let delta = previousEligibleTimestamp.map { min(configuration.maximumGap, input.timestamp - $0) } ?? 0
 
         if isNormal {
@@ -198,23 +202,26 @@ public struct ReminderEngine: Sendable {
         }
         previousNormalTimestamp = nil; goodSeconds = 0
         let next: ReminderKind?
-        if let shoulder, abs(shoulder) >= configuration.shoulderEnterDegrees && abs(roll) <= configuration.exitDegrees {
+        if let shoulder, abs(shoulder) >= configuration.shoulderEnterDegrees && abs(roll) <= configuration.headExitDegrees {
             next = .shoulders
-        } else if abs(head) >= configuration.headEnterDegrees {
-            next = head > 0 ? .headTowardLeft : .headTowardRight
+        } else if abs(roll) >= configuration.headEnterDegrees {
+            // When head and torso lean together, use a general posture correction.
+            if let shoulder, abs(shoulder) > configuration.headExitDegrees && abs(head) <= configuration.headExitDegrees {
+                next = .shoulders
+            } else { next = roll > 0 ? .headTowardLeft : .headTowardRight }
         } else if let shoulder, abs(shoulder) >= configuration.shoulderEnterDegrees {
             next = .shoulders
         } else if let active = candidate ?? episode {
             switch active {
-            case .headTowardLeft: next = head > configuration.exitDegrees ? active : nil
-            case .headTowardRight: next = head < -configuration.exitDegrees ? active : nil
-            case .shoulders: next = shoulder.map { abs($0) > configuration.exitDegrees ? active : nil } ?? nil
+            case .headTowardLeft: next = roll > configuration.headExitDegrees ? active : nil
+            case .headTowardRight: next = roll < -configuration.headExitDegrees ? active : nil
+            case .shoulders: next = shoulder.map { abs($0) > configuration.shoulderExitDegrees || abs(roll) > configuration.headExitDegrees ? active : nil } ?? nil
             }
         } else { next = nil }
         guard let next else {
             // Values in the entry/exit band are not proof of recovery.
             previousEligibleTimestamp = nil; suspendedSince = nil
-            state = .normal
+            state = .slightDeviation
             return ReminderResult(state: state, event: nil)
         }
         if next == .shoulders && !shoulderAvailable { return suspend("肩线暂不可用，头部可判定", at: input.timestamp) }

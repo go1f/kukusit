@@ -219,4 +219,46 @@ final class ReminderChecks {
         let events = (0..<65).compactMap { engine.observe(input(Double($0) / 2)).event }
         expectTrue(events.contains(.correction(.headTowardLeft)))
     }
+    func testFourToSixDegreesStartHeadTimer() {
+        for angle in [4.0, 5, 6, -4, -5, -6] {
+            for shoulder in [Double?.some(0), nil] {
+                var engine = ReminderEngine()
+                _ = feed(&engine, start: 0, seconds: 3) { self.input($0, roll: angle, shoulder: shoulder) }
+                if case .candidate = engine.state {} else { expectTrue(false) }
+                let events = feed(&engine, start: 3, seconds: 27) { self.input($0, roll: angle, shoulder: shoulder) }
+                expectTrue(events.contains(.correction(angle > 0 ? .headTowardLeft : .headTowardRight)))
+            }
+        }
+    }
+    func testIntermediateBandIsNotNormal() {
+        var engine = ReminderEngine()
+        let events = feed(&engine, start: 0, seconds: 30) { self.input($0, roll: 3) }
+        expectEqual(engine.state, .slightDeviation)
+        expectFalse(events.contains { if case .correction = $0 { return true }; return false })
+    }
+    func testThreeDegreesCannotConfirmRecovery() {
+        var engine = ReminderEngine()
+        _ = feed(&engine, start: 0, seconds: 30) { self.input($0, roll: 5) }
+        let events = feed(&engine, start: 30, seconds: 5) { self.input($0, roll: 3) }
+        expectFalse(events.contains(.recovered))
+        if case .deviating = engine.state {} else { expectTrue(false) }
+        let recovered = feed(&engine, start: 35, seconds: 3) { self.input($0, roll: 2) }
+        expectEqual(recovered.filter { $0 == .recovered }.count, 1)
+        expectEqual(engine.state, .normal)
+    }
+    func testShouldersDoNotCancelVisibleHeadDeviation() {
+        var engine = ReminderEngine()
+        let events = feed(&engine, start: 0, seconds: 30) { self.input($0, roll: 5, shoulder: 4) }
+        expectTrue(events.contains(.correction(.shoulders)))
+        expectFalse(engine.state == .normal)
+        engine = ReminderEngine()
+        _ = feed(&engine, start: 0, seconds: 3) { self.input($0, roll: 4, shoulder: 1.5) }
+        if case .candidate(.headTowardLeft, _) = engine.state {} else { expectTrue(false) }
+    }
+    func testSmallShoulderShiftDoesNotInventHeadTilt() {
+        var engine = ReminderEngine()
+        let events = feed(&engine, start: 0, seconds: 30) { self.input($0, roll: 0, shoulder: 4) }
+        expectEqual(engine.state, .normal)
+        expectFalse(events.contains { if case .correction = $0 { return true }; return false })
+    }
 }

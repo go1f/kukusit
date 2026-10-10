@@ -67,6 +67,7 @@ struct SettingsWindowView: View {
                     Text("2 分钟").tag(120.0); Text("3 分钟").tag(180.0); Text("5 分钟").tag(300.0)
                 }
                 Text("短暂回正不足 2 秒保留计时；提醒静音、约 4 秒淡出。").font(.caption).foregroundStyle(.secondary)
+                Text("头部偏离 4°开始计时；回到 2°以内持续 2 秒才确认恢复。").font(.caption).foregroundStyle(.secondary)
             }
             Section("画中画") {
                 Toggle("保持置顶", isOn: $model.settings.pipOnTop)
