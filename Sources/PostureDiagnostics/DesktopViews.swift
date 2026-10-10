@@ -14,6 +14,7 @@ struct MonitorPopover: View {
                     .buttonStyle(.borderless).help("设置").accessibilityLabel("设置")
             }
             Text(model.monitorSummary).font(.callout).foregroundStyle(.secondary)
+            if let detail = model.monitorDetail { Text(detail).font(.caption).foregroundStyle(.secondary) }
             Button { desktop.showMain(expandPreview: true) } label: { Label("打开监控窗口", systemImage: "video") }
                 .buttonStyle(.borderedProminent).frame(maxWidth: .infinity)
             HStack {
@@ -48,6 +49,7 @@ struct PiPView: View {
             HStack(spacing: 8) {
                 Text(model.isDemo ? "演示输入" : model.monitorSummary)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .help(model.monitorDetail.map { model.monitorSummary + "\n" + $0 } ?? model.monitorSummary)
                 Spacer()
                 Button { desktop.expandPiP() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                     .buttonStyle(.borderless).frame(width: 28, height: 28).help("放大到完整窗口").accessibilityLabel("放大到完整窗口")

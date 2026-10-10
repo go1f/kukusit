@@ -33,13 +33,15 @@ struct MonitorWindowView: View {
                 metric("头部偏移", model.rollDeviation)
                 metric("肩线偏移", model.shoulderDeviation)
                 Spacer()
-                Text(model.monitorSummary).font(.callout).foregroundStyle(.secondary)
+                Text(model.monitorSummary).font(.callout).foregroundStyle(.secondary).lineLimit(1).help(model.monitorSummary)
                 Button(model.hasStarted ? "暂停监测" : "开始监测") { model.hasStarted ? model.pause() : model.start() }
                     .buttonStyle(.borderedProminent)
             }
             if case .recovering(_, let seconds) = model.monitorState {
                 Text("待确认恢复 · 已累计偏离 \(seconds) 秒；连续回正 2 秒后才清零。")
                     .font(.caption).foregroundStyle(.secondary)
+            } else if let detail = model.monitorDetail {
+                Text(detail).font(.caption).foregroundStyle(.secondary)
             }
         }.padding(18).frame(minWidth: 720, minHeight: 520)
             .background(Color(nsColor: .windowBackgroundColor))

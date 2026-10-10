@@ -2,10 +2,10 @@ import Foundation
 import PostureCore
 
 final class ReminderChecks {
-    private func input(_ time: Double, roll: Double = 14, shoulder: Double = 0, yaw: Double = 0,
-                       reliable: Bool = true, context: String = "reference") -> ReminderInput {
+    private func input(_ time: Double, roll: Double = 14, shoulder: Double? = 0, yaw: Double = 0, pitch: Double = 0,
+                       reliable: Bool = true, briefLoss: Bool = false, context: String = "reference") -> ReminderInput {
         ReminderInput(timestamp: time, contextID: context, reliable: reliable,
-                      rollDeviation: roll, shoulderDeviation: shoulder, yawDeviation: yaw)
+                      allowsBriefLoss: briefLoss, rollDeviation: roll, shoulderDeviation: shoulder, yawDeviation: yaw, pitchDeviation: pitch)
     }
     private func feed(_ engine: inout ReminderEngine, start: Double, seconds: Double,
                       make: (Double) -> ReminderInput) -> [ReminderEvent] {
@@ -124,5 +124,99 @@ final class ReminderChecks {
         expectEqual(WindowLayout.pipHeight(width: 360, visual: true), 299.25, accuracy: 0.001)
         expectEqual(WindowLayout.pipHeight(width: 440, visual: true), 344.25, accuracy: 0.001)
         expectEqual(WindowLayout.pipHeight(width: 360, visual: false), 100, accuracy: 0.001)
+    }
+    func testHeadOnlyCanRemindWithoutShoulders() {
+        var engine = ReminderEngine()
+        let events = feed(&engine, start: 0, seconds: 30) { self.input($0, shoulder: nil) }
+        expectTrue(events.contains(.correction(.headTowardLeft)))
+        expectFalse(events.contains(.correction(.shoulders)))
+    }
+    func testBriefRecognitionLossRetainsTimeButDoesNotCountLoss() {
+        var engine = ReminderEngine()
+        _ = feed(&engine, start: 0, seconds: 18) { self.input($0) }
+        let lost = feed(&engine, start: 18, seconds: 1) { self.input($0, reliable: false, briefLoss: true) }
+        expectFalse(lost.contains { if case .correction = $0 { return true }; return false })
+        if case .waiting(_, let seconds) = engine.state { expectTrue(seconds >= 17) } else { expectTrue(false) }
+        let early = feed(&engine, start: 19, seconds: 6) { self.input($0) }
+        expectFalse(early.contains(.correction(.headTowardLeft)))
+        let later = feed(&engine, start: 25, seconds: 5) { self.input($0) }
+        expectTrue(later.contains(.correction(.headTowardLeft)))
+    }
+    func testLongRecognitionLossClearsPendingTime() {
+        var engine = ReminderEngine()
+        _ = feed(&engine, start: 0, seconds: 18) { self.input($0) }
+        _ = feed(&engine, start: 18, seconds: 3) { self.input($0, reliable: false, briefLoss: true) }
+        let resumed = feed(&engine, start: 21, seconds: 15) { self.input($0) }
+        expectFalse(resumed.contains(.correction(.headTowardLeft)))
+    }
+    func testRepeatedSingleFrameLossDoesNotPreventReminder() {
+        var engine = ReminderEngine()
+        let events = feed(&engine, start: 0, seconds: 60) {
+            let missing = Int(($0 * 6).rounded()) % 12 == 0
+            return self.input($0, reliable: !missing, briefLoss: true)
+        }
+        expectTrue(events.contains(.correction(.headTowardLeft)))
+    }
+    func testMissingShoulderFrameDoesNotResetHeadTimer() {
+        var engine = ReminderEngine()
+        _ = feed(&engine, start: 0, seconds: 18) { self.input($0) }
+        _ = feed(&engine, start: 18, seconds: 1) { self.input($0, shoulder: nil) }
+        let events = feed(&engine, start: 19, seconds: 10) { self.input($0) }
+        expectTrue(events.contains(.correction(.headTowardLeft)))
+    }
+    func testMissingShouldersCannotConfirmShoulderRecovery() {
+        var engine = ReminderEngine()
+        _ = feed(&engine, start: 0, seconds: 30) { self.input($0, roll: 12, shoulder: 12) }
+        let lost = feed(&engine, start: 30, seconds: 3) { self.input($0, roll: 0, shoulder: nil) }
+        expectFalse(lost.contains(.recovered))
+    }
+    func testShoulderJitterDoesNotBlockClearHead() {
+        var engine = ReminderEngine()
+        let events = feed(&engine, start: 0, seconds: 40) {
+            self.input($0, shoulder: Int(($0 * 6).rounded()) % 2 == 0 ? 0 : 24)
+        }
+        expectTrue(events.contains(.correction(.headTowardLeft)))
+        expectFalse(events.contains(.correction(.shoulders)))
+    }
+    func testSlowTiltStillAccumulates() {
+        var engine = ReminderEngine()
+        _ = feed(&engine, start: 0, seconds: 5) { self.input($0, roll: 14 + $0 * 8) }
+        if case .candidate(_, let seconds) = engine.state { expectTrue(seconds >= 4) } else { expectTrue(false) }
+    }
+    func testOneAngleOutlierDoesNotResetPersistence() {
+        var engine = ReminderEngine()
+        let events = feed(&engine, start: 0, seconds: 30) {
+            self.input($0, roll: Int(($0 * 6).rounded()) % 20 == 0 ? 40 : 14)
+        }
+        expectTrue(events.contains(.correction(.headTowardLeft)))
+    }
+    func testUpperScreenPitchDifferenceCanBeJudged() {
+        var engine = ReminderEngine()
+        let events = feed(&engine, start: 0, seconds: 30) { self.input($0, pitch: 25) }
+        expectTrue(events.contains(.correction(.headTowardLeft)))
+    }
+    func testDirectionChangeClearsEarlierTimer() {
+        var engine = ReminderEngine()
+        _ = feed(&engine, start: 0, seconds: 18) { self.input($0) }
+        _ = feed(&engine, start: 18, seconds: 1) { self.input($0, yaw: 40) }
+        let events = feed(&engine, start: 19, seconds: 15) { self.input($0) }
+        expectFalse(events.contains(.correction(.headTowardLeft)))
+    }
+    func testBriefPipelineStallDoesNotCountMissingTime() {
+        var engine = ReminderEngine()
+        _ = feed(&engine, start: 0, seconds: 18) { self.input($0) }
+        let early = feed(&engine, start: 19, seconds: 6) { self.input($0) }
+        expectFalse(early.contains(.correction(.headTowardLeft)))
+        let later = feed(&engine, start: 25, seconds: 5) { self.input($0) }
+        expectTrue(later.contains(.correction(.headTowardLeft)))
+    }
+    func testSpecificReasonIsVisibleInStateLabel() {
+        expectEqual(MonitorState.unknown("脸部过小或置信度不足").label, "脸部过小或置信度不足")
+        expectEqual(MonitorState.waiting("正在收集清晰姿态", accumulatedSeconds: 12).label, "正在收集清晰姿态")
+    }
+    func testTwoHzObservationsStillReachDecision() {
+        var engine = ReminderEngine()
+        let events = (0..<65).compactMap { engine.observe(input(Double($0) / 2)).event }
+        expectTrue(events.contains(.correction(.headTowardLeft)))
     }
 }

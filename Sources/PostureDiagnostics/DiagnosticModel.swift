@@ -30,7 +30,9 @@ final class DiagnosticModel: ObservableObject {
     private(set) var renderingImageRequested = false
     private(set) var renderingSkeletonRequested = false
     @Published var monitorState: MonitorState = .inactive
+    @Published private var monitoringBaseline: Calibration?
     @Published var reminderCount = 0
+    private(set) var judgmentSampleCounts: [String: Int] = [:]
     @Published var settings = MonitorSettings.load() {
         didSet {
             if !acceleratedDemo && !isDemo { settings.save() }
@@ -123,17 +125,37 @@ final class DiagnosticModel: ObservableObject {
         if !hasStarted { return status.title }
         if calibrationProgress != nil { return "正在校准 · 提醒暂缓" }
         if !settings.automaticReminders { return "观察中 · 提醒已关闭" }
+        if case .normal = monitorState, monitoringScopeDetail != nil { return "头部接近参考" }
         return monitorState.label
+    }
+    var monitorDetail: String? {
+        guard hasStarted, collector == nil, settings.automaticReminders else { return nil }
+        if case .waiting(_, let seconds) = monitorState, seconds > 0 {
+            return "已累计偏离 \(seconds) 秒；短暂波动保留计时，这段时间不累计。"
+        }
+        if case .candidate(_, let seconds) = monitorState {
+            return "已累计偏离 \(seconds) / \(Int(effectiveReminderConfiguration.sustainedSeconds)) 秒"
+                + (monitoringScopeDetail.map { " · " + $0 } ?? "")
+        }
+        if case .normal = monitorState { return monitoringScopeDetail }
+        if case .deviating = monitorState { return monitoringScopeDetail }
+        return nil
+    }
+    private var monitoringScopeDetail: String? {
+        guard let monitoringBaseline else { return nil }
+        if monitoringBaseline.shoulder == nil { return "仅监测头部：当前参考没有肩线" }
+        if metrics?.shouldersUsable != true { return "仅监测头部：\(metrics?.shoulderReason ?? "肩线暂不可用")" }
+        return nil
     }
     var isAcceleratedDemo: Bool { acceleratedDemo && isDemo }
     var faceAvailability: Double { frameCount > 0 ? Double(faceValidCount) / Double(frameCount) : 0 }
     var shoulderAvailability: Double { frameCount > 0 ? Double(shoulderValidCount) / Double(frameCount) : 0 }
     var rollDeviation: Double? {
-        guard observationIsFresh, let value = metrics?.roll, let baseline = matchingProfile?.roll else { return nil }
+        guard observationIsFresh, let value = metrics?.roll, let baseline = (monitoringBaseline ?? matchingProfile)?.roll else { return nil }
         return Geometry.wrapDegrees(value - baseline.median)
     }
     var shoulderDeviation: Double? {
-        guard observationIsFresh, let value = metrics?.shoulderAngle, let baseline = matchingProfile?.shoulder else { return nil }
+        guard observationIsFresh, let value = metrics?.shoulderAngle, let baseline = (monitoringBaseline ?? matchingProfile)?.shoulder else { return nil }
         return Geometry.wrapDegrees(value - baseline.median, period: 180)
     }
 
@@ -231,6 +253,7 @@ final class DiagnosticModel: ObservableObject {
         p95Milliseconds = sorted[min(sorted.count - 1, Int(Double(sorted.count - 1) * 0.95))]
         collector?.consume(packet.observation, metrics: evaluated)
         evaluateReminder(packet, metrics: evaluated)
+        judgmentSampleCounts[monitorSummary, default: 0] += 1
     }
 
     private func tick() {
@@ -262,7 +285,7 @@ final class DiagnosticModel: ObservableObject {
             }
         }
     }
-    private func clearCurrentObservation() { frame = nil; metrics = nil; observationIsFresh = false }
+    private func clearCurrentObservation() { frame = nil; metrics = nil; observationIsFresh = false; monitoringBaseline = nil }
     func setRendering(image: Bool, skeleton: Bool) {
         renderingImageRequested = image; renderingSkeletonRequested = skeleton
         camera.setRendering(image: image, faceLandmarks: skeleton)
@@ -292,37 +315,20 @@ final class DiagnosticModel: ObservableObject {
             applyReminderResult(reminderEngine.reset()); return
         }
         let observation = packet.observation
-        var baseline = matchingProfile
-        if !isDemo, let yaw = metrics.yaw, let pitch = metrics.pitch {
-            let candidates = profiles.values.filter {
-                $0.cameraSignature == observation.cameraSignature && $0.yaw != nil && $0.pitch != nil && $0.shoulder != nil
-            }
-            baseline = candidates.min {
-                abs(Geometry.wrapDegrees(yaw - $0.yaw!.median)) + abs(Geometry.wrapDegrees(pitch - $0.pitch!.median))
-                    < abs(Geometry.wrapDegrees(yaw - $1.yaw!.median)) + abs(Geometry.wrapDegrees(pitch - $1.pitch!.median))
-            } ?? baseline
-        }
-        guard let baseline, let referenceShoulder = baseline.shoulder,
-              let referenceYaw = baseline.yaw, let referencePitch = baseline.pitch else {
+        let baseline = isDemo ? DemoFrame.calibration : CalibrationReferenceSelector.choose(
+            profiles: Array(profiles.values), cameraSignature: observation.cameraSignature,
+            yaw: metrics.yaw, pitch: metrics.pitch, previousID: monitoringBaseline?.id, preferredContext: selectedContext)
+        if monitoringBaseline != baseline { monitoringBaseline = baseline }
+        guard let baseline else {
             applyReminderResult(reminderEngine.observe(ReminderInput(timestamp: observation.timestamp, contextID: "no-reference",
-                reliable: false, quietReason: "需完成头部与肩线校准"))); return
+                reliable: false, quietReason: "请先完成个人校准"))); return
         }
-        guard metrics.faceUsable, metrics.shouldersUsable,
-              let roll = metrics.roll, let shoulder = metrics.shoulderAngle,
-              let yaw = metrics.yaw, let pitch = metrics.pitch else {
-            applyReminderResult(reminderEngine.observe(ReminderInput(timestamp: observation.timestamp,
-                contextID: baseline.id.uuidString, reliable: false,
-                quietReason: metrics.faceUsable ? metrics.shoulderReason : metrics.faceReason))); return
-        }
-        let input = ReminderInput(timestamp: observation.timestamp, contextID: baseline.id.uuidString, reliable: true,
-            rollDeviation: Geometry.wrapDegrees(roll - baseline.roll.median),
-            shoulderDeviation: Geometry.wrapDegrees(shoulder - referenceShoulder.median, period: 180),
-            yawDeviation: Geometry.wrapDegrees(yaw - referenceYaw.median),
-            pitchDeviation: Geometry.wrapDegrees(pitch - referencePitch.median))
+        let input = ReminderInput.make(observation: observation, metrics: metrics, baseline: baseline)
         applyReminderResult(reminderEngine.observe(input))
     }
     private func resetStats() {
         frameCount = 0; faceValidCount = 0; shoulderValidCount = 0
+        judgmentSampleCounts = [:]
         analysisHz = 0; p95Milliseconds = 0; elapsedSeconds = 0
         frameTimes = []; latencies = []; startedAt = nil
     }
@@ -348,6 +354,8 @@ final class DiagnosticModel: ObservableObject {
                 "bodyBackend": frame?.bodyBackendName ?? bodyBackend.label,
                 "reminderCount": reminderCount,
                 "monitorState": monitorState.label,
+                "monitorDetail": monitorDetail ?? "",
+                "judgmentSampleCounts": judgmentSampleCounts,
                 "previewImageRequested": renderingImageRequested,
                 "skeletonRenderingRequested": renderingSkeletonRequested,
                 "lastFrameHasImage": frame?.image != nil,

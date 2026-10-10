@@ -25,6 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     "referenceMatches": model.matchingProfile != nil, "automaticReminders": model.settings.automaticReminders,
                     "sustainedSeconds": model.settings.sustainedSeconds, "cooldownSeconds": model.settings.cooldownSeconds,
                     "analysisHz": model.analysisHz, "pipelineP95Ms": model.p95Milliseconds,
+                    "monitorSummary": model.monitorSummary, "monitorDetail": model.monitorDetail ?? "",
+                    "faceUsableFraction": model.faceAvailability, "shoulderUsableFraction": model.shoulderAvailability,
+                    "judgmentSampleCounts": model.judgmentSampleCounts,
                     "presentation": desktop.presentationSnapshot]
                 self.writeReport(report, flag: "--background-report=")
             }
@@ -43,8 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         schedule(7.5) { self.record("recovery", model: model, desktop: desktop) }
         schedule(10) { model.demoScenario = .headTilt }
         schedule(16) { self.record("cooldown", model: model, desktop: desktop); model.demoScenario = .turnedAway }
-        schedule(18) { self.record("turned-away", model: model, desktop: desktop); desktop.hidePiP(); desktop.hideMain() }
-        schedule(19) {
+        schedule(18) { self.record("turned-away", model: model, desktop: desktop); model.demoScenario = .croppedShoulder }
+        schedule(20) { self.record("head-only", model: model, desktop: desktop); desktop.hidePiP(); desktop.hideMain() }
+        schedule(21) {
             self.record("hidden", model: model, desktop: desktop)
             let report: [String: Any] = ["input": "synthetic accelerated demo; no camera or personal calibration changes",
                 "snapshots": self.smokeLog, "focusPreserved": desktop.reminders.focusPreserved]
@@ -55,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func record(_ phase: String, model: DiagnosticModel, desktop: DesktopCoordinator) {
         smokeLog.append(["phase": phase, "banner": desktop.reminders.snapshot,
                          "presentation": desktop.presentationSnapshot, "reminderCount": model.reminderCount,
-                         "monitorState": model.monitorState.label])
+                         "monitorState": model.monitorSummary, "monitorDetail": model.monitorDetail ?? ""])
     }
     private func writeReport(_ report: [String: Any], flag: String) {
         guard let argument = CommandLine.arguments.first(where: { $0.hasPrefix(flag) }),

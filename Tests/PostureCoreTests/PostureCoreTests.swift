@@ -180,4 +180,70 @@ final class PostureCoreTests {
         expectFalse(metrics.shouldersUsable)
         expectEqual(metrics.shoulderReason, "测试：肩部分析不可用")
     }
+    func testEyeAnchorAssociatesShouldersWithoutNose() {
+        var observation = frame()
+        observation.joints[.nose] = JointPoint(Point(0.5, 0.75), confidence: 0.1)
+        observation.joints[.leftEye] = JointPoint(Point(0.55, 0.8), confidence: 0.95)
+        expectTrue(QualityGate.evaluate(observation).shouldersUsable)
+    }
+    func testReminderFactorySupportsHeadOnlyBaselineAndLostShoulders() throws {
+        let baseline = try completeCollector(shoulders: false).finish(at: 20)
+        let observation = frame(30, shoulders: false)
+        let input = ReminderInput.make(observation: observation, metrics: QualityGate.evaluate(observation), baseline: baseline)
+        expectTrue(input.reliable)
+        expectNil(input.shoulderDeviation)
+        expectEqual(input.pitchDeviation, 0)
+        let fullBaseline = try completeCollector().finish(at: 20)
+        let lost = ReminderInput.make(observation: observation, metrics: QualityGate.evaluate(observation), baseline: fullBaseline)
+        expectTrue(lost.reliable)
+        expectNil(lost.shoulderDeviation)
+    }
+    func testReminderFactoryDoesNotInventMissingOrientation() throws {
+        let baseline = try completeCollector().finish(at: 20)
+        var observation = frame(30); observation.pitch = nil
+        let input = ReminderInput.make(observation: observation, metrics: QualityGate.evaluate(observation), baseline: baseline)
+        expectFalse(input.reliable)
+        expectEqual(input.quietReason, "观看方向角度不可用，保持安静")
+    }
+    func testMultipleTargetsCannotUseLossGrace() throws {
+        let baseline = try completeCollector().finish(at: 20)
+        var observation = frame(30); observation.faceCount = 2
+        let input = ReminderInput.make(observation: observation, metrics: QualityGate.evaluate(observation), baseline: baseline)
+        expectFalse(input.reliable)
+        expectFalse(input.allowsBriefLoss)
+    }
+    func testAbsoluteSideTurnCannotUseHeadOnlyFallback() throws {
+        var baseline = try completeCollector().finish(at: 20)
+        baseline.yaw?.median = 35
+        var observation = frame(30); observation.yaw = 45
+        let input = ReminderInput.make(observation: observation, metrics: QualityGate.evaluate(observation), baseline: baseline)
+        expectFalse(input.reliable)
+        expectFalse(input.allowsBriefLoss)
+    }
+    func testQualityReasonsSeparateConfidenceAndCropping() {
+        var observation = frame()
+        observation.joints[.leftShoulder]?.confidence = 0.2
+        expectEqual(QualityGate.evaluate(observation).shoulderReason, "左肩点置信度不足")
+        observation.joints[.leftShoulder] = JointPoint(Point(1.02, 0.4), confidence: 0.95)
+        expectEqual(QualityGate.evaluate(observation).shoulderReason, "左肩靠近画面边缘或被裁切")
+        observation.faceConfidence = .nan
+        expectFalse(QualityGate.evaluate(observation).faceUsable)
+        expectEqual(QualityGate.evaluate(observation).faceReason, "脸部置信度不足")
+    }
+    func testReferenceLossAndBoundaryNoiseKeepCurrentContext() throws {
+        let upper = try completeCollector().finish(at: 20)
+        var lower = upper; lower.id = UUID(); lower.context = .laptop; lower.pitch?.median = 15
+        let profiles = [upper, lower]
+        let missing = CalibrationReferenceSelector.choose(profiles: profiles, cameraSignature: "camera-a",
+            yaw: nil, pitch: nil, previousID: lower.id, preferredContext: .upperMonitor)
+        expectEqual(missing?.id, lower.id)
+        let boundary = CalibrationReferenceSelector.choose(profiles: profiles, cameraSignature: "camera-a",
+            yaw: 1, pitch: -2, previousID: lower.id, preferredContext: .upperMonitor)
+        expectEqual(boundary?.id, lower.id)
+        let changed = CalibrationReferenceSelector.choose(profiles: profiles, cameraSignature: "camera-a",
+            yaw: 1, pitch: -15, previousID: lower.id, preferredContext: .upperMonitor)
+        expectEqual(changed?.id, upper.id)
+        expectNil(CalibrationReferenceSelector.choose(profiles: profiles, cameraSignature: "different-camera",
+            yaw: 1, pitch: -15, previousID: lower.id, preferredContext: .upperMonitor))
+    }
 }

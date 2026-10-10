@@ -121,3 +121,24 @@ public struct CalibrationArchive: Codable, Sendable {
     public var profiles: [String: Calibration]
     public init(profiles: [String: Calibration] = [:]) { self.profiles = profiles }
 }
+
+public enum CalibrationReferenceSelector {
+    public static func choose(profiles: [Calibration], cameraSignature: String, yaw: Double?, pitch: Double?,
+                              previousID: UUID?, preferredContext: ViewingContext) -> Calibration? {
+        let matching = profiles.filter { $0.cameraSignature == cameraSignature }
+            .sorted { $0.context.rawValue < $1.context.rawValue }
+        let previous = matching.first { $0.id == previousID }
+        let fallback = previous ?? matching.first { $0.context == preferredContext }
+        guard let yaw, let pitch, yaw.isFinite, pitch.isFinite else { return fallback }
+        let directional = matching.filter { $0.yaw != nil && $0.pitch != nil }
+        func distance(_ profile: Calibration) -> Double {
+            guard let referenceYaw = profile.yaw, let referencePitch = profile.pitch else { return .infinity }
+            return abs(Geometry.wrapDegrees(yaw - referenceYaw.median))
+                + abs(Geometry.wrapDegrees(pitch - referencePitch.median))
+        }
+        guard let closest = directional.min(by: { distance($0) < distance($1) }) else { return fallback }
+        // Direction noise near the boundary must not alternate references and clear timers.
+        if let previous, distance(previous) <= distance(closest) + 8 { return previous }
+        return closest
+    }
+}

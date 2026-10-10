@@ -138,8 +138,10 @@ public enum QualityGate {
         if observation.faceCount == 1, let box = observation.faceBox {
             if !box.hasMargin {
                 result.faceReason = "脸部靠近边缘或被裁切"
-            } else if box.width * observation.imageSize.width < 80 || observation.faceConfidence < 0.6 {
-                result.faceReason = "脸部过小或置信度不足"
+            } else if box.width * observation.imageSize.width < 80 {
+                result.faceReason = "脸部在画面中过小"
+            } else if !observation.faceConfidence.isFinite || observation.faceConfidence < 0.6 {
+                result.faceReason = "脸部置信度不足"
             } else if let roll = observation.roll, roll.isFinite {
                 result.roll = roll
                 result.yaw = observation.yaw.flatMap { $0.isFinite ? $0 : nil }
@@ -151,11 +153,19 @@ public enum QualityGate {
         }
         if let failure = observation.bodyFailureReason { result.shoulderReason = failure; return result }
         guard observation.bodyCount == 1 else { return result }
-        guard let left = observation.joints[.leftShoulder], let right = observation.joints[.rightShoulder] else {
-            result.shoulderReason = "双肩关键点不完整"; return result
+        guard let left = observation.joints[.leftShoulder] else {
+            result.shoulderReason = "左肩关键点未识别"; return result
         }
-        guard left.isReliable, right.isReliable else {
-            result.shoulderReason = "肩点置信度不足或靠近画面边缘"; return result
+        guard let right = observation.joints[.rightShoulder] else {
+            result.shoulderReason = "右肩关键点未识别"; return result
+        }
+        for (point, label) in [(left, "左肩"), (right, "右肩")] {
+            if !point.confidence.isFinite || point.confidence < 0.6 {
+                result.shoulderReason = "\(label)点置信度不足"; return result
+            }
+            if !point.isReliable {
+                result.shoulderReason = "\(label)靠近画面边缘或被裁切"; return result
+            }
         }
         let shoulderWidth = abs(left.location.x - right.location.x)
         guard shoulderWidth * observation.imageSize.width >= 120 else {
@@ -164,12 +174,15 @@ public enum QualityGate {
         guard result.faceUsable, let face = observation.faceBox else {
             result.shoulderReason = "需看清脸部以确认肩部目标"; return result
         }
-        let noseMatches = observation.joints[.nose].map { $0.isReliable && face.contains($0.location, expansion: 0.35) } ?? false
+        // MediaPipe has no neck point; use reliable eye/ear anchors if the nose is occluded.
+        let faceAnchorMatches = [Joint.nose, .leftEye, .rightEye, .leftEar, .rightEar].contains {
+            observation.joints[$0].map { $0.isReliable && face.contains($0.location, expansion: 0.35) } ?? false
+        }
         let neckMatches = observation.joints[.neck].map {
             $0.isReliable && abs($0.location.x - face.center.x) < shoulderWidth * 0.45
                 && $0.location.y <= face.center.y && $0.location.y > face.y - face.height
         } ?? false
-        guard noseMatches || neckMatches else {
+        guard faceAnchorMatches || neckMatches else {
             result.shoulderReason = "脸部与肩部目标暂未关联"; return result
         }
         if let yaw = result.yaw, abs(yaw) > 35 {

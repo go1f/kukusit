@@ -79,7 +79,28 @@ struct ChecksMain {
             ("subsecond recovery preserves accumulated time", reminders.testSubsecondRecoveryRetainsAccumulation),
             ("two-second recovery clears pending time", reminders.testTwoSecondRecoveryClearsPendingAccumulation),
             ("short recovery never emits recovered", reminders.testBriefRecoveryDoesNotEmitRecovered),
-            ("compact PiP sizing", reminders.testCompactPiPHeightScalesWithVideoWidth)
+            ("compact PiP sizing", reminders.testCompactPiPHeightScalesWithVideoWidth),
+            ("eye anchor without nose", suite.testEyeAnchorAssociatesShouldersWithoutNose),
+            ("head-only reminder input and lost shoulders", suite.testReminderFactorySupportsHeadOnlyBaselineAndLostShoulders),
+            ("missing direction never invented", suite.testReminderFactoryDoesNotInventMissingOrientation),
+            ("multiple targets bypass loss grace", suite.testMultipleTargetsCannotUseLossGrace),
+            ("head-only reminder", reminders.testHeadOnlyCanRemindWithoutShoulders),
+            ("brief loss pauses and preserves time", reminders.testBriefRecognitionLossRetainsTimeButDoesNotCountLoss),
+            ("long loss clears time", reminders.testLongRecognitionLossClearsPendingTime),
+            ("repeated single-frame losses", reminders.testRepeatedSingleFrameLossDoesNotPreventReminder),
+            ("shoulder dropout preserves head timer", reminders.testMissingShoulderFrameDoesNotResetHeadTimer),
+            ("missing shoulders never confirm recovery", reminders.testMissingShouldersCannotConfirmShoulderRecovery),
+            ("shoulder jitter leaves head usable", reminders.testShoulderJitterDoesNotBlockClearHead),
+            ("slow tilt accumulates", reminders.testSlowTiltStillAccumulates),
+            ("isolated angle outlier", reminders.testOneAngleOutlierDoesNotResetPersistence),
+            ("upper display viewing pitch", reminders.testUpperScreenPitchDifferenceCanBeJudged),
+            ("looking away clears persistence", reminders.testDirectionChangeClearsEarlierTimer),
+            ("brief pipeline stall", reminders.testBriefPipelineStallDoesNotCountMissingTime),
+            ("specific state reason", reminders.testSpecificReasonIsVisibleInStateLabel),
+            ("absolute side turn blocks head-only fallback", suite.testAbsoluteSideTurnCannotUseHeadOnlyFallback),
+            ("two Hz still reaches decision", reminders.testTwoHzObservationsStillReachDecision),
+            ("confidence and cropping reasons differ", suite.testQualityReasonsSeparateConfidenceAndCropping),
+            ("reference loss and boundary noise", suite.testReferenceLossAndBoundaryNoiseKeepCurrentContext)
         ]
         for (name, check) in checks { try check(); print("PASS: \(name)") }
         print("\(checks.count) / \(checks.count) core checks passed")
