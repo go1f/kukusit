@@ -5,7 +5,10 @@ cd "$project_root"
 if [[ "$(uname -m)" != arm64 ]]; then
   printf '%s\n' 'Build this release on an Apple Silicon Mac.' >&2; exit 1
 fi
-if [[ ! -x .local/frozen/pose-worker/pose-worker ]]; then zsh scripts/build_pose_runtime.sh; fi
+runtime_sources="$(shasum -a 256 pose-worker/pose_worker.py pose-worker/requirements.txt pose-worker/build-requirements.txt)"
+if [[ ! -x .local/frozen/pose-worker/pose-worker || ! -f .local/frozen/source.sha256 ]]    || [[ "$(cat .local/frozen/source.sha256)" != "$runtime_sources" ]]; then
+  zsh scripts/build_pose_runtime.sh
+fi
 zsh scripts/build_app.sh
 release_app="$project_root/release/Kukusit.app"
 mkdir -p release
@@ -25,12 +28,7 @@ cp THIRD_PARTY_NOTICES.md "$release_app/Contents/Resources/THIRD_PARTY_NOTICES.m
 mkdir -p "$release_app/Contents/Resources/ThirdPartyLicenses/Python"
 cp App/Python-LICENSE.txt "$release_app/Contents/Resources/ThirdPartyLicenses/Python/LICENSE.txt"
 .venv-pose/bin/python scripts/collect_licenses.py "$release_app/Contents/Resources/ThirdPartyLicenses"
-pose_identity="${KUKUSIT_SIGN_IDENTITY:--}"
-codesign --force --sign "$pose_identity" --options runtime \
-  --identifier com.kojyufu.posturediagnostics \
-  --requirements '=designated => identifier "com.kojyufu.posturediagnostics"' \
-  --entitlements App/Entitlements.plist "$release_app"
-codesign --verify --deep --strict "$release_app"
+zsh scripts/sign_app.sh "$release_app"
 "$release_app/Contents/MacOS/PostureDiagnostics" --bridge-check
 version="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' App/Info.plist)"
 archive="release/Kukusit-${version}-macOS-arm64.zip"

@@ -3,7 +3,7 @@ import CoreVideo
 import Darwin
 import PostureCore
 
-enum BodyBackend: String, CaseIterable, Identifiable {
+enum BodyBackend: String, Codable, CaseIterable, Identifiable {
     case appleVision, mediaPipe
     var id: String { rawValue }
     var label: String { self == .appleVision ? "Apple Vision" : "MediaPipe Pose" }
@@ -62,6 +62,11 @@ final class PoseWorker {
     private var cancelled = false
     private let config: PoseConfiguration
     let signature: String
+    static var configuredSignature: String? {
+        guard let location = Bundle.main.url(forResource: "pose-backend", withExtension: "json"),
+              let data = try? Data(contentsOf: location), let config = try? JSONDecoder().decode(PoseConfiguration.self, from: data) else { return nil }
+        return "mediapipe\(config.packageVersion)|\(config.modelSHA256)"
+    }
 
     static var isAvailable: Bool {
         guard let location = Bundle.main.url(forResource: "pose-backend", withExtension: "json"),
@@ -85,11 +90,13 @@ final class PoseWorker {
             process.arguments = ["-u", resources.appendingPathComponent("pose_worker.py").path,
                                  "--model", resources.appendingPathComponent(config.modelFile).path, "--sha256", config.modelSHA256]
         } else { throw workerError("缺少本地推理运行时。") }
-        var environment = ProcessInfo.processInfo.environment
+        var environment = ["PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8", "TMPDIR": NSTemporaryDirectory()]
         environment["PYTHONNOUSERSITE"] = "1"
         environment["OMP_NUM_THREADS"] = "2"
+        environment["OPENBLAS_NUM_THREADS"] = "2"
         process.environment = environment
         process.standardInput = input; process.standardOutput = output
+        process.qualityOfService = .utility
         process.standardError = FileHandle.nullDevice
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         process.terminationHandler = { [weak inbox] _ in inbox?.finish("肩部进程已退出，请重新开始。") }

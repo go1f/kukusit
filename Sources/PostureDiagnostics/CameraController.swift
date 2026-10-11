@@ -3,6 +3,7 @@ import AVFoundation
 import Vision
 import CoreImage
 import CryptoKit
+import Metal
 import PostureCore
 
 enum CameraStatus: Equatable {
@@ -22,10 +23,10 @@ enum CameraStatus: Equatable {
         switch self {
         case .idle: return "点击开始后，仅使用 MacBook 内置摄像头。"
         case .requestingPermission: return "请在 macOS 权限提示中选择是否允许本应用使用摄像头。"
-        case .starting: return "配置 720p 采集与约 6 Hz 的视觉分析。"
+        case .starting: return "启动 720p 采集；视频与识别分别处理。"
         case .running: return "图像仅在本机处理；持续偏离且识别稳定时才轻量提醒。"
         case .paused(let reason), .failed(let reason): return reason
-        case .denied: return "在系统设置 → 隐私与安全性 → 摄像头中开启“坐姿诊断”，然后重新开始。"
+        case .denied: return "在系统设置 → 隐私与安全性 → 摄像头中开启 Kukusit，然后重新开始。"
         }
     }
     var isActive: Bool {
@@ -74,9 +75,22 @@ private final class LatestMainDelivery<Value> {
 final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     var onStatus: ((CameraStatus) -> Void)?
     var onFrame: ((AnalysisPacket) -> Void)?
+    var onFirstVideoFrame: ((Double) -> Void)?
+    var previewSession: AVCaptureSession { session }
     private let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "posture.capture.session")
-    private let analysisQueue = DispatchQueue(label: "posture.capture.analysis", qos: .userInitiated)
+    private let captureQueue = DispatchQueue(label: "posture.capture.frames", qos: .userInitiated)
+    private let analysisQueue = DispatchQueue(label: "posture.capture.face", qos: .userInitiated)
+    private let bodyQueue = DispatchQueue(label: "posture.capture.body", qos: .utility)
+    private var faceBusy = false, bodyBusy = false
+    private var tuning = MonitorTuning()
+    private var handMonitoring = true, oralMonitoring = false
+    private var startedAt = 0.0, firstVideoSent = false
+    private var bodyCache: (timestamp: Double, count: Int, joints: [PostureCore.Joint: JointPoint])?
+    private var bodyFailure = "肩部模型正在准备"
+    private var retryBodyAt = 0.0
+    private var configuredBodySignature = ""
+    private var bodyBuffer: CVPixelBuffer?
     private let lifecycleLock = NSLock()
     private var generation = 0
     private var desiredRunning = false
@@ -93,14 +107,26 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     // These fields are accessed only on analysisQueue.
     private var analysisGeneration = -1
     private var scheduler = AnalysisScheduler()
-    private var analysisBodyFailure: String?
+    private var bodyScheduler = AnalysisScheduler(hertz: 3)
+    private var schedulerHertz = 6.0, bodySchedulerHertz = 3.0
+    private var lastHandAt = -Double.infinity
+    private var cachedHandTips: [JointPoint] = []
+    private var handGeneration = -1
+    private var lastHandSucceeded = false
+    private var faceComputePreference: ComputePreference?
+    private var bodyComputePreference: ComputePreference?
     private let faceRequest = VNDetectFaceRectanglesRequest()
     private let landmarksRequest = VNDetectFaceLandmarksRequest()
     private let bodyRequest = VNDetectHumanBodyPoseRequest()
-    private let ciContext = CIContext(options: [.cacheIntermediates: false])
+    private let handRequest = VNDetectHumanHandPoseRequest()
+    private let ciContext: CIContext = {
+        if let gpu = MTLCreateSystemDefaultDevice() { return CIContext(mtlDevice: gpu, options: [.cacheIntermediates: false]) }
+        return CIContext(options: [.cacheIntermediates: false])
+    }()
 
     override init() {
         super.init()
+        handRequest.maximumHandCount = 2
         delivery.handler = { [weak self] packet in
             guard let self, self.isCurrent(packet.generation, requireCapturing: true) else { return }
             self.onFrame?(packet)
@@ -125,12 +151,22 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
 
     deinit { observations.forEach(NotificationCenter.default.removeObserver) }
 
+    func configureAnalysis(tuning: MonitorTuning, hands: Bool, oral: Bool) {
+        lifecycleLock.lock()
+        self.tuning = tuning.normalized; handMonitoring = hands; oralMonitoring = oral
+        lifecycleLock.unlock()
+    }
     func start(backend: BodyBackend = .appleVision) {
         lifecycleLock.lock()
         generation += 1
         let token = generation
         desiredRunning = true; capturing = false
         selectedBackend = backend
+        faceBusy = false; bodyBusy = false; bodyCache = nil
+        bodyFailure = "肩部模型正在准备"; retryBodyAt = 0
+        startedAt = ProcessInfo.processInfo.systemUptime; firstVideoSent = false
+        configuredBodySignature = backend == .mediaPipe
+            ? (PoseWorker.configuredSignature ?? "mediapipe-unavailable") : "vision\(bodyRequest.revision)"
         let oldWorker = poseWorker; poseWorker = nil
         lifecycleLock.unlock()
         oldWorker?.cancel()
@@ -259,7 +295,7 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
             outputSettings[kCVPixelBufferHeightKey as String] = 720
         }
         output.videoSettings = outputSettings
-        output.setSampleBufferDelegate(self, queue: analysisQueue)
+        output.setSampleBufferDelegate(self, queue: captureQueue)
         guard session.canAddOutput(output) else { throw captureError("不能创建视频输出。") }
         session.addOutput(output)
         if let connection = output.connection(with: .video) {
@@ -290,98 +326,187 @@ final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBufferDele
         let (token, active, backend) = snapshot()
         guard active, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        if analysisGeneration != token { analysisGeneration = token; scheduler.reset(); analysisBodyFailure = nil }
+        lifecycleLock.lock()
+        guard generation == token, desiredRunning, capturing else { lifecycleLock.unlock(); return }
+        let config = tuning, hands = handMonitoring, oral = oralMonitoring
+        let landmarks = needsFaceLandmarks, name = deviceName, hash = deviceHash, bodySignature = configuredBodySignature
+        let first = !firstVideoSent; firstVideoSent = true
+        let latency = now - startedAt
+        lifecycleLock.unlock()
+        if first { DispatchQueue.main.async { [weak self] in
+            guard let self, self.isCurrent(token, requireCapturing: true) else { return }
+            self.onFirstVideoFrame?(latency)
+        } }
+        if analysisGeneration != token {
+            analysisGeneration = token; scheduler.reset(); bodyScheduler.reset()
+        }
+        if schedulerHertz != config.faceHertz { schedulerHertz = config.faceHertz; scheduler = AnalysisScheduler(hertz: schedulerHertz) }
+        if bodySchedulerHertz != config.bodyHertz { bodySchedulerHertz = config.bodyHertz; bodyScheduler = AnalysisScheduler(hertz: bodySchedulerHertz) }
+        if bodyScheduler.shouldProcess(at: now) {
+            lifecycleLock.lock()
+            let ready = generation == token && desiredRunning && capturing && !bodyBusy && now >= retryBodyAt
+            if ready { bodyBusy = true }
+            lifecycleLock.unlock()
+            if ready { bodyQueue.async { [weak self] in self?.analyzeBody(buffer, timestamp: now, token: token, backend: backend) } }
+        }
         guard scheduler.shouldProcess(at: now) else { return }
         lifecycleLock.lock()
-        let capturedDeviceName = deviceName, capturedDeviceHash = deviceHash
-        let renderImage = needsPreviewImage, renderFaceLandmarks = needsFaceLandmarks
+        let ready = generation == token && desiredRunning && capturing && !faceBusy
+        if ready { faceBusy = true }
         lifecycleLock.unlock()
+        guard ready else { return }
+        analysisQueue.async { [weak self] in
+            self?.analyzeFace(buffer, timestamp: now, token: token, name: name, hash: hash,
+                              bodySignature: bodySignature, backend: backend, hands: hands, oral: oral, landmarks: landmarks)
+        }
+    }
+
+    private func analyzeBody(_ buffer: CVPixelBuffer, timestamp: Double, token: Int, backend: BodyBackend) {
+        defer { lifecycleLock.lock(); if generation == token { bodyBusy = false }; lifecycleLock.unlock() }
+        guard isCurrent(token, requireCapturing: true) else { return }
+        autoreleasepool {
+            do {
+                var count = 0, joints: [PostureCore.Joint: JointPoint] = [:]
+                if backend == .mediaPipe {
+                    lifecycleLock.lock(); var worker = poseWorker; lifecycleLock.unlock()
+                    if worker == nil {
+                        let created = try PoseWorker()
+                        lifecycleLock.lock()
+                        let current = generation == token && desiredRunning && capturing
+                        if current { poseWorker = created }
+                        lifecycleLock.unlock()
+                        guard current else { created.cancel(); return }
+                        worker = created; try created.start()
+                    }
+                    guard let worker, isCurrent(token, requireCapturing: true) else { return }
+                    let small = try reducedBodyBuffer(buffer)
+                    let poses = try worker.detect(small, timestamp: timestamp)
+                    count = poses.count
+                    if count == 1 { joints = PoseAdapter.joints(from: poses[0]) }
+                } else {
+                    lifecycleLock.lock(); let preference = tuning.computePreference; lifecycleLock.unlock()
+                    if bodyComputePreference != preference {
+                        VisionCompute.configure([bodyRequest], preference: preference); bodyComputePreference = preference
+                    }
+                    try VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up).perform([bodyRequest])
+                    let bodies = bodyRequest.results ?? []; count = bodies.count
+                    if let body = bodies.count == 1 ? bodies[0] : nil {
+                        let keys: [(PostureCore.Joint, VNHumanBodyPoseObservation.JointName)] = [
+                            (.nose, .nose), (.neck, .neck), (.leftShoulder, .leftShoulder), (.rightShoulder, .rightShoulder),
+                            (.leftElbow, .leftElbow), (.rightElbow, .rightElbow), (.leftWrist, .leftWrist), (.rightWrist, .rightWrist),
+                            (.leftEye, .leftEye), (.rightEye, .rightEye), (.leftEar, .leftEar), (.rightEar, .rightEar)]
+                        for (name, key) in keys { if let point = try? body.recognizedPoint(key), point.confidence > 0 {
+                            joints[name] = JointPoint(Point(point.location.x, point.location.y), confidence: Double(point.confidence))
+                        } }
+                    }
+                }
+                lifecycleLock.lock()
+                if generation == token && desiredRunning {
+                    bodyCache = (timestamp, count, joints); bodyFailure = "未识别到双肩"
+                }
+                lifecycleLock.unlock()
+            } catch {
+                lifecycleLock.lock()
+                let current = generation == token && desiredRunning
+                let worker = current ? poseWorker : nil
+                if current { poseWorker = nil; bodyCache = nil; retryBodyAt = ProcessInfo.processInfo.systemUptime + 5
+                    bodyFailure = "肩部分析暂不可用，稍后重试：\(error.localizedDescription)" }
+                lifecycleLock.unlock(); worker?.cancel()
+            }
+        }
+    }
+    func reducedBodyBuffer(_ source: CVPixelBuffer) throws -> CVPixelBuffer {
+        let sourceWidth = CVPixelBufferGetWidth(source), sourceHeight = CVPixelBufferGetHeight(source)
+        let width = min(640, sourceWidth), height = max(2, Int(Double(sourceHeight) * Double(width) / Double(sourceWidth)) / 2 * 2)
+        if bodyBuffer == nil || CVPixelBufferGetWidth(bodyBuffer!) != width || CVPixelBufferGetHeight(bodyBuffer!) != height {
+            let attributes: [CFString: Any] = [kCVPixelBufferMetalCompatibilityKey: true, kCVPixelBufferIOSurfacePropertiesKey: [:]]
+            var created: CVPixelBuffer?
+            guard CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
+                                      attributes as CFDictionary, &created) == kCVReturnSuccess, let created else {
+                throw captureError("无法建立肩部分析缓冲区")
+            }
+            bodyBuffer = created
+        }
+        let image = CIImage(cvPixelBuffer: source).transformed(by: CGAffineTransform(scaleX: Double(width) / Double(sourceWidth),
+                                                                                  y: Double(height) / Double(sourceHeight)))
+        ciContext.render(image, to: bodyBuffer!, bounds: CGRect(x: 0, y: 0, width: width, height: height), colorSpace: CGColorSpaceCreateDeviceRGB())
+        return bodyBuffer!
+    }
+    private func analyzeFace(_ buffer: CVPixelBuffer, timestamp: Double, token: Int, name: String, hash: String,
+                             bodySignature: String, backend: BodyBackend, hands: Bool, oral: Bool, landmarks: Bool) {
+        defer { lifecycleLock.lock(); if generation == token { faceBusy = false }; lifecycleLock.unlock() }
+        guard isCurrent(token, requireCapturing: true) else { return }
+        let begun = ProcessInfo.processInfo.systemUptime
+        lifecycleLock.lock(); let preference = tuning.computePreference; lifecycleLock.unlock()
+        if faceComputePreference != preference {
+            VisionCompute.configure([faceRequest, landmarksRequest, handRequest], preference: preference); faceComputePreference = preference
+        }
+        if handGeneration != token { handGeneration = token; lastHandAt = -.infinity; cachedHandTips = []; lastHandSucceeded = false }
         autoreleasepool {
             do {
                 let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up)
-                let requests: [VNRequest] = backend == .appleVision ? [faceRequest, bodyRequest] : [faceRequest]
-                try handler.perform(requests)
-                let faces = faceRequest.results ?? []
-                let bodies = backend == .appleVision ? bodyRequest.results ?? [] : []
-                let face = faces.count == 1 ? faces[0] : nil
-                let body = bodies.count == 1 ? bodies[0] : nil
-                var bodyCount = bodies.count
-                var bodySignature = "vision\(bodyRequest.revision)"
-                var joints: [PostureCore.Joint: JointPoint] = [:]
-                let keys: [(PostureCore.Joint, VNHumanBodyPoseObservation.JointName)] = [
-                    (.nose, .nose), (.neck, .neck), (.leftShoulder, .leftShoulder), (.rightShoulder, .rightShoulder),
-                    (.leftElbow, .leftElbow), (.rightElbow, .rightElbow), (.leftWrist, .leftWrist), (.rightWrist, .rightWrist),
-                    (.leftEye, .leftEye), (.rightEye, .rightEye), (.leftEar, .leftEar), (.rightEar, .rightEar)
-                ]
-                if let body {
-                    for (name, key) in keys {
-                        if let point = try? body.recognizedPoint(key), point.confidence > 0 {
-                            joints[name] = JointPoint(Point(point.location.x, point.location.y), confidence: Double(point.confidence))
-                        }
-                    }
-                }
-                if backend == .mediaPipe {
-                    bodySignature = "mediapipe-unavailable"
-                    if analysisBodyFailure == nil {
-                        var localWorker: PoseWorker?
-                        do {
-                            lifecycleLock.lock(); localWorker = poseWorker; lifecycleLock.unlock()
-                            if localWorker == nil {
-                                let worker = try PoseWorker()
-                                localWorker = worker
-                                lifecycleLock.lock()
-                                let current = generation == token && desiredRunning && capturing
-                                if current { poseWorker = worker }
-                                lifecycleLock.unlock()
-                                guard current else { worker.cancel(); return }
-                                try worker.start()
-                            }
-                            if let worker = localWorker {
-                                bodySignature = worker.signature
-                                let poses = try worker.detect(buffer, timestamp: now)
-                                bodyCount = poses.count
-                                if poses.count == 1 { joints = PoseAdapter.joints(from: poses[0]) }
-                            }
-                        } catch {
-                            localWorker?.cancel()
-                            guard isCurrent(token, requireCapturing: true) else { return }
-                            analysisBodyFailure = "肩部分析暂不可用：\(error.localizedDescription)"
-                            lifecycleLock.lock(); poseWorker = nil; lifecycleLock.unlock()
-                        }
-                    }
-                }
+                try handler.perform([faceRequest])
+                let faces = faceRequest.results ?? [], face = faces.count == 1 ? faces[0] : nil
                 let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
                 let box = face.map { FaceBox(x: $0.boundingBox.minX, y: $0.boundingBox.minY,
                                              width: $0.boundingBox.width, height: $0.boundingBox.height) }
-                var facePoints: [Point] = []
-                if renderFaceLandmarks, let face, let box {
+                var points: [Point] = [], oralObservation: OralObservation?
+                if let face, let box, hands || oral || landmarks {
                     landmarksRequest.inputFaceObservations = [face]
-                    try handler.perform([landmarksRequest])
-                    if let region = landmarksRequest.results?.first?.landmarks?.allPoints {
-                        facePoints = (0..<region.pointCount).map {
-                            let point = region.normalizedPoints[$0]
-                            return Point(box.x + point.x * box.width, box.y + point.y * box.height)
+                    let detailAvailable = (try? handler.perform([landmarksRequest])) != nil
+                    if detailAvailable, let detail = landmarksRequest.results?.first?.landmarks {
+                        func region(_ r: VNFaceLandmarkRegion2D?) -> [Point] {
+                            guard let r else { return [] }
+                            return (0..<r.pointCount).map { let p = r.normalizedPoints[$0]
+                                return Point(box.x + Double(p.x) * box.width, box.y + Double(p.y) * box.height) }
+                        }
+                        if landmarks { points = region(detail.allPoints) }
+                        if hands, timestamp - lastHandAt >= 1.0 / 3 {
+                            lastHandSucceeded = (try? handler.perform([handRequest])) != nil
+                            lastHandAt = timestamp
+                            cachedHandTips = (lastHandSucceeded ? handRequest.results ?? [] : []).flatMap { hand in
+                                [VNHumanHandPoseObservation.JointName.thumbTip, .thumbIP, .indexTip, .indexDIP,
+                                 .middleTip, .middleDIP, .ringTip, .ringDIP, .littleTip, .littleDIP].compactMap { joint in
+                                    guard let p = try? hand.recognizedPoint(joint) else { return nil }
+                                    return JointPoint(Point(p.location.x, p.location.y), confidence: Double(p.confidence))
+                                }
+                            }
+                        }
+                        let outer = region(detail.outerLips)
+                        if let f = FacialGeometry.features(outer: outer, inner: region(detail.innerLips), leftEye: region(detail.leftEye),
+                                                           rightEye: region(detail.rightEye), nose: region(detail.nose),
+                                                           image: ImageSize(Double(width), Double(height))) {
+                            oralObservation = OralObservation(features: f, mouthOutline: outer,
+                                fingerTips: hands && timestamp - lastHandAt <= 0.5 ? cachedHandTips : [],
+                                handsObserved: hands && lastHandSucceeded && timestamp - lastHandAt <= 0.5)
                         }
                     }
                 }
-                let signature = "\(capturedDeviceHash)|\(width)x\(height)|up|face\(faceRequest.revision)|\(bodySignature)"
-                let observation = Observation(timestamp: now, imageSize: ImageSize(Double(width), Double(height)),
-                                              cameraSignature: signature, faceCount: faces.count, bodyCount: bodyCount,
-                                              faceBox: box, faceConfidence: Double(face?.confidence ?? 0),
-                                              roll: face?.roll.map { $0.doubleValue * 180 / .pi },
-                                              yaw: face?.yaw.map { $0.doubleValue * 180 / .pi },
-                                              pitch: face?.pitch.map { $0.doubleValue * 180 / .pi }, joints: joints,
-                                              faceLandmarks: facePoints, bodyFailureReason: analysisBodyFailure)
-                let image = renderImage ? ciContext.createCGImage(CIImage(cvPixelBuffer: buffer), from: CGRect(x: 0, y: 0, width: width, height: height)) : nil
+                lifecycleLock.lock()
+                let cached = bodyCache, failure = bodyFailure
+                lifecycleLock.unlock()
+                let body = cached.flatMap { timestamp >= $0.timestamp && timestamp - $0.timestamp <= 0.75 ? $0 : nil }
+                let signature = "\(hash)|\(width)x\(height)|up|face\(faceRequest.revision)|\(bodySignature)"
+                let observation = Observation(timestamp: timestamp, imageSize: ImageSize(Double(width), Double(height)), cameraSignature: signature,
+                    faceCount: faces.count, bodyCount: body?.count ?? 0, faceBox: box, faceConfidence: Double(face?.confidence ?? 0),
+                    roll: face?.roll.map { $0.doubleValue * 180 / .pi }, yaw: face?.yaw.map { $0.doubleValue * 180 / .pi },
+                    pitch: face?.pitch.map { $0.doubleValue * 180 / .pi }, joints: body?.joints ?? [:], faceLandmarks: points,
+                    bodyFailureReason: body == nil ? (cached == nil ? failure : "肩部结果过期，暂只用头部") : nil, oral: oralObservation)
                 guard isCurrent(token, requireCapturing: true) else { return }
-                delivery.submit(AnalysisPacket(generation: token, observation: observation, image: image,
-                                               inferenceMilliseconds: (ProcessInfo.processInfo.systemUptime - now) * 1000,
-                                               cameraName: capturedDeviceName, bodyBackendName: backend.label))
+                delivery.submit(AnalysisPacket(generation: token, observation: observation, image: nil,
+                    inferenceMilliseconds: (ProcessInfo.processInfo.systemUptime - begun) * 1000,
+                    cameraName: name, bodyBackendName: backend.label))
             } catch {
-                // Stop rather than showing a previous successful observation as current.
-                if isCurrent(token, requireCapturing: true) {
-                    halt(.failed("视觉分析失败：\(error.localizedDescription)"))
-                }
+                // Optional hand/landmark failures must never stop the camera or raw preview.
+                // Do not deliver stale face angles as a fresh observation.
+                guard isCurrent(token, requireCapturing: true) else { return }
+                let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+                let observation = Observation(timestamp: timestamp, imageSize: ImageSize(Double(width), Double(height)),
+                    cameraSignature: "\(hash)|\(width)x\(height)|up|face\(faceRequest.revision)|\(bodySignature)",
+                    faceCount: 0, bodyCount: 0, faceBox: nil, faceConfidence: 0, roll: nil, yaw: nil, pitch: nil, joints: [:],
+                    bodyFailureReason: "视觉分析短暂失败")
+                delivery.submit(AnalysisPacket(generation: token, observation: observation, image: nil,
+                    inferenceMilliseconds: (ProcessInfo.processInfo.systemUptime - begun) * 1000, cameraName: name, bodyBackendName: backend.label))
             }
         }
     }

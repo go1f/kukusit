@@ -4,11 +4,13 @@
 
 ## 安装
 
-从本仓库的 GitHub Releases 下载 `Kukusit-0.4.4-macOS-arm64.zip`，解压后把 `Kukusit.app` 拖到“应用程序”。运行时只显示菜单栏图标。
+0.5.0 正在准备发布；功能和安装包检查已完成，最终本地开发证书签名及可视化核验等待构建 Mac 解锁并完成钥匙串授权。现有正式发行版仍可从 Releases 获取。
+
+从本仓库的 GitHub Releases 下载 `Kukusit-0.5.0-macOS-arm64.dmg`，打开 DMG 后把 `Kukusit.app` 拖到 Applications。也提供 ZIP。安装后可从“应用程序”、Spotlight 或 Dock 启动，菜单栏入口继续保留。
 
 发行包包含原生界面、本地 MediaPipe 推理运行时和模型，**无需安装 Python、无需克隆项目，也不需要联网推理**。目标为 Apple Silicon Mac，包括 M5 / macOS 27；当前已在 M2 / macOS 27 验证，尚未在 M5 实机测试。
 
-当前发行包使用 ad-hoc 签名，未进行 Developer ID 公证。macOS 可能拦截从网络下载的应用，请按“系统设置 → 隐私与安全性”中的系统提示手动允许。首次开始监测时，还需允许应用使用摄像头。
+当前发行包使用登录钥匙串中的本地开发证书自签名，未进行 Apple Developer ID 公证。macOS 可能拦截从网络下载的应用，请按“系统设置 → 隐私与安全性”中的系统提示手动允许。首次开始监测时，还需允许应用使用摄像头。
 
 新电脑需要重新建立个人参考；发行包不包含原电脑的校准或摄像头画面。
 
@@ -20,9 +22,11 @@
 - 在正常看上方外接屏的舒适姿态下校准 20 秒。经常使用下屏时可以再建立下屏参考。
 - 关闭窗口或收起 PiP 后继续监测；点击“暂停”才释放摄像头。
 
-默认持续偏离 25 秒才轻量提醒，提示约 4 秒淡出，不抢键盘焦点、不发声音。回正不足 2 秒为“待确认恢复”，保留累计异常时间；重新偏离继续累计，连续回正满 2 秒才清零。仍未恢复时隔 3 分钟再提醒。
+默认持续偏离 **5 秒 / 头部 3°** 才轻量提醒，回到 **1.5°以内并持续 2 秒** 才确认恢复。时间可调 1–120 秒，恢复、冷却、角度、识别频率和更多范围均在设置中调整并保存。提供更敏感/敏感/宽松预设及参数文件导入导出，不需要改代码或重新发版。提示默认静音、约 4 秒淡出，不抢键盘焦点。
 
-头部相对个人参考偏离达到 4°开始计时，回到 2°以内持续 2 秒才确认恢复。2°到 4°之间显示“轻微偏离参考”；已有异常计时时，这个范围继续保留异常状态。头部状态采用与界面“头部偏移”一致的角度，肩线同向倾斜不会把头部偏移抵消成正常。肩部独立提醒阈值仍为 8°，恢复范围为 5°。
+“口部习惯”可启用手靠近嘴唇提示、下颌放松定时自检，以及默认关闭的口唇和眼周变化试验。不能用摄像头确认牙齿紧绷、磨牙、具体牙齿咬唇或大小脸病因。试验模式比较与个人自然参考的变化；需重新校准采集口唇和眼周参考。详见 [能力、动作映射和完整审查](docs/architecture-review-v0.5.md)。
+
+视频预览不等待推理。原生 Vision 可选自动/CPU/GPU/Neural Engine 优先；肩部是独立 CPU 进程，默认 3 Hz、640×360 分析输入。性能页显示实际脸部频率、推理延迟和本次摄像头首帧时间；设备偏好不保证每个阶段使用同一设备。
 
 转头、离座、多个目标、低质量或过期观察都保持安静。关键点可用率不代表坐姿识别准确率，软件不测量颈椎角度或诊断疾病。
 
@@ -35,7 +39,10 @@
 ```sh
 zsh scripts/setup_pose_backend.sh /absolute/path/to/python3.12
 zsh scripts/build_pose_runtime.sh
+zsh scripts/create_signing_identity.sh
 zsh scripts/build_release.sh
+zsh scripts/create_dmg.sh
+zsh scripts/install_app.sh
 ```
 
 输出为 `release/Kukusit.app` 和可下载的 ZIP。`build_release.sh` 将 Python 运行时冻结到应用内，配置中不保留开发机器的 Python 绝对路径。
@@ -54,6 +61,9 @@ release/Kukusit.app/Contents/MacOS/PostureDiagnostics --bridge-check
 图像只在本机内存和私有进程管道中处理，不保存照片、录像或上传画面。个人参考保存在应用自己的 Application Support，设置保存在 UserDefaults。源码仓库不上传 `.venv-pose`、本机模型缓存、个人校准及实拍验证记录。
 
 ## 文档
+
+- [v0.5.0 可调提醒、独立视频与口部习惯](docs/release-v0.5.0.md)
+- [v0.5 全盘架构审查与能力边界](docs/architecture-review-v0.5.md)
 
 - [v0.4 发布与布局更新](docs/release-v0.4.md)
 - [v0.4.1 应用与菜单栏图标](docs/release-v0.4.1.md)

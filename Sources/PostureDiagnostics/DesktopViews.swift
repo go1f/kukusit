@@ -95,13 +95,17 @@ private struct PiPPreview: View {
     var body: some View {
         ZStack {
             Color.black.opacity(0.88)
-            if model.settings.pipShowsVideo, let image = model.frame?.image {
-                Image(decorative: image, scale: 1).resizable().scaledToFit().scaleEffect(x: model.mirrored ? -1 : 1, y: 1)
+            if model.settings.pipShowsVideo {
+                if model.isDemo, let image = model.frame?.image {
+                    Image(decorative: image, scale: 1).resizable().scaledToFit().scaleEffect(x: model.mirrored ? -1 : 1, y: 1)
+                } else if model.hasStarted {
+                    CameraPreview(session: model.cameraSession, mirrored: model.mirrored, enabled: model.renderingImageRequested)
+                }
             }
             if model.settings.pipShowsSkeleton, let frame = model.frame {
                 LandmarkOverlay(observation: frame.observation, metrics: model.metrics, mirrored: model.mirrored)
             }
-            if model.frame == nil {
+            if model.frame == nil && (model.isDemo || model.firstVideoSeconds == nil) {
                 Label(model.hasStarted ? "等待清晰画面" : "已暂停", systemImage: "camera")
                     .font(.caption).foregroundStyle(.white.opacity(0.8))
             }

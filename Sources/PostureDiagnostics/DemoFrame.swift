@@ -3,7 +3,7 @@ import CoreGraphics
 import PostureCore
 
 enum DemoScenario: String, CaseIterable, Identifiable {
-    case clear, headTilt, shoulderShift, turnedAway, croppedShoulder, multiplePeople, away
+    case clear, headTilt, shoulderShift, turnedAway, croppedShoulder, multiplePeople, away, handNearMouth, lipChange, eyeChange
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -14,6 +14,9 @@ enum DemoScenario: String, CaseIterable, Identifiable {
         case .croppedShoulder: return "肩部出画"
         case .multiplePeople: return "多个目标"
         case .away: return "离座"
+        case .handNearMouth: return "手靠近嘴唇（模拟）"
+        case .lipChange: return "口唇变化（模拟）"
+        case .eyeChange: return "单侧眯眼（模拟）"
         }
     }
 }
@@ -61,13 +64,18 @@ enum DemoFrame {
             let angle = Double(index) / 28 * 2 * Double.pi
             return Point(0.5 + cos(angle) * 0.065, 0.77 + sin(angle) * 0.13)
         }
+        let mouth = [Point(0.46,0.68), Point(0.48,0.69), Point(0.52,0.69), Point(0.54,0.68), Point(0.52,0.67), Point(0.48,0.67)]
+        let oral = OralObservation(features: FacialFeatures(outerLipAspect: scenario == .lipChange ? 0.1 : 0.25,
+            mouthOpening: 0.02, mouthShift: 0, cornerSlope: 0, eyelidDifference: scenario == .eyeChange ? 0.4 : 0),
+            mouthOutline: mouth, fingerTips: scenario == .handNearMouth ? [JointPoint(Point(0.48,0.69),confidence:0.95)] : [],
+            handsObserved: true)
         let observation = Observation(timestamp: timestamp, imageSize: ImageSize(1280, 720), cameraSignature: "synthetic-demo",
                                       faceCount: scenario == .away ? 0 : (scenario == .multiplePeople ? 2 : 1),
                                       bodyCount: scenario == .away ? 0 : (scenario == .multiplePeople ? 2 : 1),
                                       faceBox: FaceBox(x: 0.42, y: 0.62, width: 0.16, height: 0.30),
                                       faceConfidence: 0.98, roll: scenario == .headTilt ? 8.2 : 3.2,
                                       yaw: scenario == .turnedAway ? 50 : 1.8, pitch: -14.0, joints: joints,
-                                      faceLandmarks: facePoints)
+                                      faceLandmarks: facePoints, oral: oral)
         return AnalysisPacket(generation: -1, observation: observation, image: image,
                               inferenceMilliseconds: 0, cameraName: "模拟画面（未启动摄像头）")
     }

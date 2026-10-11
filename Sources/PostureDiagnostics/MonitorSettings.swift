@@ -18,8 +18,12 @@ enum PiPCorner: String, Codable, CaseIterable, Identifiable {
 
 struct MonitorSettings: Codable, Equatable {
     var automaticReminders = true
-    var sustainedSeconds = 25.0
-    var cooldownSeconds = 180.0
+    var tuning = MonitorTuning()
+    var handMouthMonitoring = true
+    var experimentalLipMonitoring = false
+    var experimentalFaceMonitoring = false
+    var jawSelfCheck = true
+    var bodyBackend: BodyBackend = .mediaPipe
     var pipOnTop = true
     var pipShowsVideo = true
     var pipShowsSkeleton = true
@@ -27,11 +31,50 @@ struct MonitorSettings: Codable, Equatable {
     var pipCorner: PiPCorner = .topRight
     var pipScreenID = "automatic"
     var resumeOnLaunch = true
-    var reminderConfiguration: ReminderConfiguration {
-        var configuration = ReminderConfiguration()
-        configuration.sustainedSeconds = min(60, max(20, sustainedSeconds))
-        configuration.cooldownSeconds = min(600, max(120, cooldownSeconds))
-        return configuration
+    var mirrored = true
+    var sustainedSeconds: Double { get { tuning.sustainedSeconds } set { tuning.sustainedSeconds = newValue } }
+    var cooldownSeconds: Double { get { tuning.cooldownSeconds } set { tuning.cooldownSeconds = newValue } }
+    var reminderConfiguration: ReminderConfiguration { tuning.reminderConfiguration }
+    init() {}
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, tuning, automaticReminders, handMouthMonitoring, experimentalLipMonitoring,
+             experimentalFaceMonitoring, jawSelfCheck, bodyBackend, pipOnTop, pipShowsVideo, pipShowsSkeleton,
+             pipSize, pipCorner, pipScreenID, resumeOnLaunch, mirrored
+    }
+    init(from decoder: Decoder) throws {
+        self.init()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // V1 lacks tuning: adopt the requested 5 s / 3° default and preserve window preferences.
+        tuning = (try c.decodeIfPresent(MonitorTuning.self, forKey: .tuning) ?? MonitorTuning()).normalized
+        automaticReminders = try c.decodeIfPresent(Bool.self, forKey: .automaticReminders) ?? true
+        handMouthMonitoring = try c.decodeIfPresent(Bool.self, forKey: .handMouthMonitoring) ?? true
+        experimentalLipMonitoring = try c.decodeIfPresent(Bool.self, forKey: .experimentalLipMonitoring) ?? false
+        experimentalFaceMonitoring = try c.decodeIfPresent(Bool.self, forKey: .experimentalFaceMonitoring) ?? false
+        jawSelfCheck = try c.decodeIfPresent(Bool.self, forKey: .jawSelfCheck) ?? true
+        bodyBackend = try c.decodeIfPresent(BodyBackend.self, forKey: .bodyBackend) ?? .mediaPipe
+        pipOnTop = try c.decodeIfPresent(Bool.self, forKey: .pipOnTop) ?? true
+        pipShowsVideo = try c.decodeIfPresent(Bool.self, forKey: .pipShowsVideo) ?? true
+        pipShowsSkeleton = try c.decodeIfPresent(Bool.self, forKey: .pipShowsSkeleton) ?? true
+        pipSize = try c.decodeIfPresent(PiPSize.self, forKey: .pipSize) ?? .small
+        pipCorner = try c.decodeIfPresent(PiPCorner.self, forKey: .pipCorner) ?? .topRight
+        pipScreenID = try c.decodeIfPresent(String.self, forKey: .pipScreenID) ?? "automatic"
+        resumeOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .resumeOnLaunch) ?? true
+        mirrored = try c.decodeIfPresent(Bool.self, forKey: .mirrored) ?? true
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(2, forKey: .schemaVersion); try c.encode(tuning.normalized, forKey: .tuning)
+        try c.encode(automaticReminders, forKey: .automaticReminders)
+        try c.encode(handMouthMonitoring, forKey: .handMouthMonitoring)
+        try c.encode(experimentalLipMonitoring, forKey: .experimentalLipMonitoring)
+        try c.encode(experimentalFaceMonitoring, forKey: .experimentalFaceMonitoring)
+        try c.encode(jawSelfCheck, forKey: .jawSelfCheck)
+        try c.encode(bodyBackend, forKey: .bodyBackend)
+        try c.encode(pipOnTop, forKey: .pipOnTop); try c.encode(pipShowsVideo, forKey: .pipShowsVideo)
+        try c.encode(pipShowsSkeleton, forKey: .pipShowsSkeleton); try c.encode(pipSize, forKey: .pipSize)
+        try c.encode(pipCorner, forKey: .pipCorner); try c.encode(pipScreenID, forKey: .pipScreenID)
+        try c.encode(resumeOnLaunch, forKey: .resumeOnLaunch)
+        try c.encode(mirrored, forKey: .mirrored)
     }
     static func load() -> MonitorSettings {
         guard let data = UserDefaults.standard.data(forKey: "monitorSettingsV1"),

@@ -69,7 +69,7 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
     @objc func showSettings() {
         statusPanel.hide()
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 670),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 720),
                 styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
             window.title = "坐姿设置"; window.isReleasedWhenClosed = false
             window.contentView = NSHostingView(rootView: SettingsWindowView(model: model, desktop: self, router: router))

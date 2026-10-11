@@ -39,6 +39,11 @@ public struct Calibration: Codable, Equatable, Sendable {
     public var faceValidSeconds: Double
     public var shoulderValidSeconds: Double
     public var sampleCount: Int
+    public var facialReference: FacialReference? = nil
+    public static func faceSignature(_ signature: String) -> String {
+        signature.split(separator: "|").prefix(4).joined(separator: "|")
+    }
+    public func matchesFace(_ signature: String) -> Bool { Self.faceSignature(cameraSignature) == Self.faceSignature(signature) }
 }
 
 public enum CalibrationError: Error, Equatable, LocalizedError {
@@ -66,6 +71,8 @@ public struct CalibrationCollector: Sendable {
     private var lastShoulderValid = false
     private var signatureChanged = false
     private var rolls: [Double] = [], yaws: [Double] = [], pitches: [Double] = [], shoulders: [Double] = []
+    private var lipAspects: [Double] = [], mouthShifts: [Double] = [], cornerSlopes: [Double] = []
+    private var eyelidDifferences: [Double] = []
 
     public init(context: ViewingContext, startedAt: Double, signature: String, duration: Double = 20) {
         self.context = context; self.startedAt = startedAt; self.signature = signature; self.duration = duration
@@ -90,6 +97,11 @@ public struct CalibrationCollector: Sendable {
         if let value = metrics.yaw { yaws.append(value) }
         if let value = metrics.pitch { pitches.append(value) }
         if let value = metrics.shoulderAngle { shoulders.append(value) }
+        if metrics.faceUsable, abs(metrics.yaw ?? 90) <= 15, abs(metrics.pitch ?? 90) <= 30,
+           let f = observation.oral?.features, f.mouthOpening < 0.08 {
+            lipAspects.append(f.outerLipAspect); mouthShifts.append(f.mouthShift); cornerSlopes.append(f.cornerSlope)
+            if let difference = f.eyelidDifference, difference.isFinite { eyelidDifferences.append(difference) }
+        }
     }
     public func finish(at now: Double, date: Date = Date()) throws -> Calibration {
         guard now >= startedAt + duration else { throw CalibrationError.notFinished }
@@ -109,10 +121,19 @@ public struct CalibrationCollector: Sendable {
             && (shoulderCandidate?.mad ?? .infinity) <= 3
             && (shoulderCandidate.map({ BaselineMetric.percentileDeviation(shoulders, from: $0.median, period: 180) <= 6 }) ?? false)
             ? shoulderCandidate : nil
-        return Calibration(id: UUID(), context: context, createdAt: date, cameraSignature: signature,
+        var result = Calibration(id: UUID(), context: context, createdAt: date, cameraSignature: signature,
                            roll: roll, yaw: yaw, pitch: pitch, shoulder: shoulder,
                            faceValidSeconds: faceValidSeconds, shoulderValidSeconds: shoulderValidSeconds,
                            sampleCount: sampleCount)
+        if lipAspects.count >= 20, let lips = BaselineMetric.from(lipAspects), lips.mad <= 0.03,
+           let shift = BaselineMetric.from(mouthShifts), shift.mad <= 0.03,
+           let slope = BaselineMetric.from(cornerSlopes), slope.mad <= 0.03 {
+            result.facialReference = FacialReference(outerLipAspect: lips.median, mouthShift: shift.median, cornerSlope: slope.median)
+            if eyelidDifferences.count >= 20, let eye = BaselineMetric.from(eyelidDifferences), eye.mad <= 0.05 {
+                result.facialReference?.eyelidDifference = eye.median
+            }
+        }
+        return result
     }
 }
 
@@ -125,7 +146,7 @@ public struct CalibrationArchive: Codable, Sendable {
 public enum CalibrationReferenceSelector {
     public static func choose(profiles: [Calibration], cameraSignature: String, yaw: Double?, pitch: Double?,
                               previousID: UUID?, preferredContext: ViewingContext) -> Calibration? {
-        let matching = profiles.filter { $0.cameraSignature == cameraSignature }
+        let matching = profiles.filter { $0.matchesFace(cameraSignature) }
             .sorted { $0.context.rawValue < $1.context.rawValue }
         let previous = matching.first { $0.id == previousID }
         let fallback = previous ?? matching.first { $0.context == preferredContext }

@@ -78,16 +78,18 @@ public struct Observation: Sendable {
     public var joints: [Joint: JointPoint]
     public var faceLandmarks: [Point]
     public var bodyFailureReason: String?
+    public var oral: OralObservation?
     public init(timestamp: Double, imageSize: ImageSize, cameraSignature: String,
                 faceCount: Int, bodyCount: Int, faceBox: FaceBox?, faceConfidence: Double,
                 roll: Double?, yaw: Double?, pitch: Double?, joints: [Joint: JointPoint], faceLandmarks: [Point] = [],
-                bodyFailureReason: String? = nil) {
+                bodyFailureReason: String? = nil, oral: OralObservation? = nil) {
         self.timestamp = timestamp; self.imageSize = imageSize; self.cameraSignature = cameraSignature
         self.faceCount = faceCount; self.bodyCount = bodyCount; self.faceBox = faceBox
         self.faceConfidence = faceConfidence; self.roll = roll; self.yaw = yaw; self.pitch = pitch
         self.joints = joints
         self.faceLandmarks = faceLandmarks
         self.bodyFailureReason = bodyFailureReason
+        self.oral = oral
     }
 }
 

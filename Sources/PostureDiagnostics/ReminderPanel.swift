@@ -46,6 +46,8 @@ final class ReminderPanelController {
     private(set) var recoveryCount = 0
     private(set) var focusPreserved = true
     private(set) var lastScreenName = ""
+    private var habitBanner = false
+    private var lastShownAt = -Double.infinity
     init(router: DisplayRouter) {
         self.router = router
         panel = PassivePanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 72),
@@ -59,10 +61,13 @@ final class ReminderPanelController {
     }
     func handle(_ event: ReminderEvent) {
         switch event {
-        case .correction(let kind): show(kind.message, recovered: false, duration: 4)
+        case .correction(let kind): habitBanner = false; show(kind.message, recovered: false, duration: 4)
         case .recovered:
-            if visible && !content.recovered { recoveryCount += 1; show("继续保持舒适，记得偶尔活动。", recovered: true, duration: 1.8) }
-        case .quiet: hide()
+            if visible && !habitBanner && !content.recovered { recoveryCount += 1; show("继续保持舒适，记得偶尔活动。", recovered: true, duration: 1.8) }
+        case .quiet: if !habitBanner { hide() }
+        case .nudge(let message):
+            guard ProcessInfo.processInfo.systemUptime - lastShownAt >= 10 else { return }
+            habitBanner = true; show(message, recovered: false, duration: 4)
         }
     }
     private func show(_ text: String, recovered: Bool, duration: Double) {
@@ -70,6 +75,7 @@ final class ReminderPanelController {
         let frontBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let keyBefore = NSApplication.shared.keyWindow
         token += 1; let current = token
+        lastShownAt = ProcessInfo.processInfo.systemUptime
         hideWork?.cancel()
         content.text = text; content.recovered = recovered
         lastScreenName = screen.localizedName

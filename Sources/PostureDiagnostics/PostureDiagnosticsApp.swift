@@ -13,23 +13,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let model = DiagnosticModel(demo: demo)
         let desktop = DesktopCoordinator(model: model)
         self.model = model; self.desktop = desktop
-        if demo || args.contains("--show-settings") { desktop.showMain(expandPreview: false) }
+        if !args.contains("--background-check") { desktop.showMain(expandPreview: true) }
         if !demo, model.settings.resumeOnLaunch, !model.profiles.isEmpty,
            AVCaptureDevice.authorizationStatus(for: .video) == .authorized { model.start() }
         if args.contains("--ui-smoke") { runSmoke(model: model, desktop: desktop) }
-        if args.contains("--background-check") {
-            schedule(12) {
+        if args.contains("--camera-check") {
+            guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
+                self.writeReport(["cameraCheck": "needs existing camera permission; no access requested"], flag: "--background-report=")
+                NSApplication.shared.terminate(nil); return
+            }
+            model.settings.automaticReminders = false
+            model.start()
+        }
+        if args.contains("--background-check") || args.contains("--camera-check") {
+            schedule(25) {
                 let report: [String: Any] = [
                     "input": "live camera; no camera image or raw landmarks saved",
                     "monitoringRunning": model.status == .running, "analyzedFrames": model.frameCount,
                     "referenceMatches": model.matchingProfile != nil, "automaticReminders": model.settings.automaticReminders,
                     "sustainedSeconds": model.settings.sustainedSeconds, "cooldownSeconds": model.settings.cooldownSeconds,
                     "analysisHz": model.analysisHz, "pipelineP95Ms": model.p95Milliseconds,
+                    "firstVideoSeconds": model.firstVideoSeconds ?? -1,
+                    "firstAnalysisSeconds": model.firstAnalysisSeconds ?? -1, "averageAppCPUPercent": model.averageAppCPU,
+                    "computeCapabilities": VisionCompute.report(),
                     "monitorSummary": model.monitorSummary, "monitorDetail": model.monitorDetail ?? "",
                     "faceUsableFraction": model.faceAvailability, "shoulderUsableFraction": model.shoulderAvailability,
                     "judgmentSampleCounts": model.judgmentSampleCounts,
                     "presentation": desktop.presentationSnapshot]
                 self.writeReport(report, flag: "--background-report=")
+                if args.contains("--exit-after-check") { NSApplication.shared.terminate(nil) }
             }
         }
     }
@@ -48,7 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         schedule(16) { self.record("cooldown", model: model, desktop: desktop); model.demoScenario = .turnedAway }
         schedule(18) { self.record("turned-away", model: model, desktop: desktop); model.demoScenario = .croppedShoulder }
         schedule(20) { self.record("head-only", model: model, desktop: desktop); desktop.hidePiP(); desktop.hideMain() }
-        schedule(21) {
+        schedule(21) { desktop.showMain(expandPreview: true); model.demoScenario = .handNearMouth }
+        schedule(25) { self.record("hand-mouth", model: model, desktop: desktop); model.demoScenario = .clear; desktop.hidePiP(); desktop.hideMain() }
+        schedule(26) {
             self.record("hidden", model: model, desktop: desktop)
             let report: [String: Any] = ["input": "synthetic accelerated demo; no camera or personal calibration changes",
                 "snapshots": self.smokeLog, "focusPreserved": desktop.reminders.focusPreserved]
@@ -75,8 +89,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 enum PostureDiagnosticsApp {
     @MainActor static func main() {
         if CommandLine.arguments.contains("--bridge-check") { BridgeChecks.run() }
+        if CommandLine.arguments.contains("--settings-check") { DiagnosticsChecks.settings() }
+        if CommandLine.arguments.contains("--pipeline-check") { DiagnosticsChecks.pipeline() }
         let app = NSApplication.shared
-        app.setActivationPolicy(.accessory)
+        app.setActivationPolicy(.regular)
         let delegate = AppDelegate()
         app.delegate = delegate
         withExtendedLifetime(delegate) { app.run() }

@@ -11,6 +11,8 @@ public struct ReminderConfiguration: Equatable, Sendable {
     public var shoulderEnterDegrees = 8.0
     public var shoulderExitDegrees = 5.0
     public var maximumGap = 0.5
+    public var yawLimitDegrees = 28.0
+    public var pitchLimitDegrees = 35.0
     public init() {}
 }
 
@@ -28,7 +30,7 @@ public enum ReminderKind: String, Codable, Sendable {
 }
 
 public enum ReminderEvent: Equatable, Sendable {
-    case correction(ReminderKind), recovered, quiet
+    case correction(ReminderKind), recovered, quiet, nudge(String)
 }
 
 public enum MonitorState: Equatable, Sendable {
@@ -94,7 +96,7 @@ public struct ReminderInput: Sendable {
         }
         return ReminderInput(timestamp: observation.timestamp, contextID: baseline.id.uuidString, reliable: true,
             rollDeviation: Geometry.wrapDegrees(roll - baseline.roll.median),
-            shoulderDeviation: metrics.shoulderAngle.flatMap { angle in
+            shoulderDeviation: (baseline.cameraSignature == observation.cameraSignature ? metrics.shoulderAngle : nil).flatMap { angle in
                 baseline.shoulder.map { Geometry.wrapDegrees(angle - $0.median, period: 180) }
             }, yawDeviation: Geometry.wrapDegrees(yaw - referenceYaw.median),
             pitchDeviation: Geometry.wrapDegrees(pitch - referencePitch.median))
@@ -151,7 +153,7 @@ public struct ReminderEngine: Sendable {
         }
         guard [input.rollDeviation, input.yawDeviation, input.pitchDeviation].allSatisfy(\.isFinite),
               input.shoulderDeviation.map(\.isFinite) ?? true else { return quiet("姿态数值无效") }
-        guard abs(input.yawDeviation) <= 28, abs(input.pitchDeviation) <= 35 else {
+        guard abs(input.yawDeviation) <= configuration.yawLimitDegrees, abs(input.pitchDeviation) <= configuration.pitchLimitDegrees else {
             return quiet("观看方向偏离参考较大，保持安静")
         }
         history.append(input)

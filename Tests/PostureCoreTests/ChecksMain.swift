@@ -37,6 +37,7 @@ struct ChecksMain {
     static func main() throws {
         let suite = PostureCoreTests()
         let reminders = ReminderChecks()
+        let habits = TuningHabitChecks()
         let checks: [(String, () throws -> Void)] = [
             ("pixel angle and endpoint order", suite.testNonSquareImageShoulderAngleAndEndpointOrder),
             ("shoulder angle wrap", suite.testShoulderDeviationWrapsAcrossNinetyDegrees),
@@ -105,7 +106,17 @@ struct ChecksMain {
             ("intermediate band is not normal", reminders.testIntermediateBandIsNotNormal),
             ("3 degrees cannot confirm recovery", reminders.testThreeDegreesCannotConfirmRecovery),
             ("shoulders never cancel visible head tilt", reminders.testShouldersDoNotCancelVisibleHeadDeviation),
-            ("small shoulder shift never invents head tilt", reminders.testSmallShoulderShiftDoesNotInventHeadTilt)
+            ("small shoulder shift never invents head tilt", reminders.testSmallShoulderShiftDoesNotInventHeadTilt),
+            ("tuning defaults and bounds", habits.testTuningDefaultsAndBounds),
+            ("partial tuning and roundtrip", habits.testPartialTuningDecodeAndRoundtrip),
+            ("custom tuning drives reminder", habits.testCustomSensitivityControlsRealReminderEngine),
+            ("facial geometry rotation and aspect", habits.testFacialGeometryCorrectsImageAspectAndHeadRotation),
+            ("hand mouth persistence and cooldown", habits.testHandMouthSustainedAndCooldown),
+            ("unreliable oral targets stay quiet", habits.testLowConfidenceAndMultipleTargetsStayQuiet),
+            ("personal asymmetry baseline", habits.testPersonalAsymmetryIsNotAutomaticAbnormality),
+            ("lip reference and talking", habits.testLipChangesNeedReferenceAndExcludeTalking),
+            ("blink versus sustained eye change", habits.testShortBlinkAndLongEyeChangeAreSeparated),
+            ("head reference survives shoulder switch", habits.testFaceReferenceSurvivesShoulderBackendSwitch)
         ]
         for (name, check) in checks { try check(); print("PASS: \(name)") }
         print("\(checks.count) / \(checks.count) core checks passed")
