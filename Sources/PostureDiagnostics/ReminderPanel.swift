@@ -12,6 +12,9 @@ final class PassivePanel: NSPanel {
 private final class BannerContent: ObservableObject {
     @Published var text = ""
     @Published var recovered = false
+    @Published var alerts: [MonitoringAlert] = []
+    @Published var width: CGFloat = 460
+    @Published var height: CGFloat = 72
 }
 
 private struct BannerView: View {
@@ -22,12 +25,19 @@ private struct BannerView: View {
                 .font(.title2).foregroundStyle(content.recovered ? Color.green : Color.accentColor)
             VStack(alignment: .leading, spacing: 3) {
                 Text(content.recovered ? "已恢复" : "轻轻调整一下").font(.caption).foregroundStyle(.secondary)
-                Text(content.text).font(.body.weight(.medium))
+                if content.alerts.isEmpty {
+                    Text(content.text).font(.body.weight(.medium))
+                } else {
+                    ForEach(content.alerts) { alert in
+                        Text(alert.message + (alert.recovering ? "（待确认恢复）" : ""))
+                            .font(.system(size: 13, weight: .medium)).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
-        .frame(width: 460, height: 72)
+        .frame(width: content.width, height: content.height)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.primary.opacity(0.08)))
         .accessibilityElement(children: .combine)
@@ -48,6 +58,7 @@ final class ReminderPanelController {
     private(set) var lastScreenName = ""
     private var habitBanner = false
     private var lastShownAt = -Double.infinity
+    private var activeAlerts: [MonitoringAlert] = []
     init(router: DisplayRouter) {
         self.router = router
         panel = PassivePanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 72),
@@ -61,26 +72,69 @@ final class ReminderPanelController {
     }
     func handle(_ event: ReminderEvent) {
         switch event {
-        case .correction(let kind): habitBanner = false; show(kind.message, recovered: false, duration: 4)
+        case .correction(let kind): habitBanner = false; show(kind.message, recovered: false, duration: nil)
         case .recovered:
             if visible && !habitBanner && !content.recovered { recoveryCount += 1; show("继续保持舒适，记得偶尔活动。", recovered: true, duration: 1.8) }
-        case .quiet: if !habitBanner { hide() }
+        case .quiet: if activeAlerts.isEmpty && !habitBanner { hide() }
         case .nudge(let message):
-            guard ProcessInfo.processInfo.systemUptime - lastShownAt >= 10 else { return }
+            guard activeAlerts.isEmpty, ProcessInfo.processInfo.systemUptime - lastShownAt >= 10 else { return }
             habitBanner = true; show(message, recovered: false, duration: 4)
         }
     }
-    private func show(_ text: String, recovered: Bool, duration: Double) {
+    func preview() {
+        guard activeAlerts.isEmpty else { return }
+        habitBanner = true
+        show("坐直一点，放松肩膀。", recovered: false, duration: 4)
+    }
+    func synchronize(_ alerts: [MonitoringAlert], recovered: Bool) {
+        let previous = activeAlerts
+        activeAlerts = alerts
+        guard !alerts.isEmpty else {
+            guard !previous.isEmpty else { return }
+            content.alerts = []
+            if recovered && visible {
+                recoveryCount += 1
+                show("继续保持舒适，记得偶尔活动。", recovered: true, duration: 1.8)
+            } else { hide() }
+            return
+        }
+        habitBanner = false
+        content.alerts = alerts
+        if !visible || content.recovered || previous.map(\.id) != alerts.map(\.id) {
+            show("", recovered: false, duration: nil)
+        } else {
+            content.recovered = false
+            placePanel()
+        }
+    }
+    private func placePanel() {
         guard let screen = router.workingScreen() else { return }
+        lastScreenName = screen.localizedName
+        let area = screen.visibleFrame
+        let width = min(460, max(240, area.width - 24))
+        let textWidth = width - 72
+        let rows = content.alerts.map { alert in
+            alert.message + (alert.recovering ? "（待确认恢复）" : "")
+        }
+        let textHeight = rows.reduce(CGFloat(0)) { total, text in
+            total + ceil((text as NSString).boundingRect(with: NSSize(width: textWidth, height: 1000),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium)]).height) + 4
+        }
+        let height = min(area.height - 24, max(72, textHeight + 48))
+        content.width = width; content.height = height
+        panel.setFrame(NSRect(x: area.midX - width / 2, y: area.maxY - height - 12, width: width, height: height), display: true)
+    }
+    private func show(_ text: String, recovered: Bool, duration: Double?) {
+        guard router.workingScreen() != nil else { return }
         let frontBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let keyBefore = NSApplication.shared.keyWindow
         token += 1; let current = token
         lastShownAt = ProcessInfo.processInfo.systemUptime
         hideWork?.cancel()
         content.text = text; content.recovered = recovered
-        lastScreenName = screen.localizedName
-        let area = screen.visibleFrame
-        panel.setFrameOrigin(NSPoint(x: area.midX - 230, y: area.maxY - 72 - 12))
+        if activeAlerts.isEmpty { content.alerts = [] }
+        placePanel()
         if !visible { panel.alphaValue = 0 }
         visible = true
         if !recovered { showCount += 1 }
@@ -91,6 +145,7 @@ final class ReminderPanelController {
         }
         focusPreserved = focusPreserved && frontBefore == NSWorkspace.shared.frontmostApplication?.processIdentifier
             && keyBefore === NSApplication.shared.keyWindow && !panel.isKeyWindow
+        guard let duration else { hideWork = nil; return }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { if self?.token == current { self?.hide() } }
         }
@@ -110,6 +165,8 @@ final class ReminderPanelController {
     var snapshot: [String: Any] {
         ["visible": visible, "showCount": showCount, "recoveryCount": recoveryCount,
          "focusPreserved": focusPreserved, "canBecomeKey": panel.canBecomeKey,
-         "ignoresMouseEvents": panel.ignoresMouseEvents, "screenName": lastScreenName]
+         "ignoresMouseEvents": panel.ignoresMouseEvents, "screenName": lastScreenName,
+         "persistent": !activeAlerts.isEmpty, "activeAlertIDs": activeAlerts.map(\.id), "alertCount": activeAlerts.count,
+         "panelHeight": panel.frame.height]
     }
 }

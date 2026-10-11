@@ -1,11 +1,14 @@
 import AppKit
 
-// Preserve the supplied artwork and alpha; pad to a transparent square.
+// Preserve the supplied artwork. The static Finder icon stays transparent;
+// AppKit selects the light/dark rounded backgrounds for the running Dock icon.
 let arguments = CommandLine.arguments
-guard arguments.count == 3,
+guard (3...4).contains(arguments.count),
       let source = NSImage(contentsOfFile: arguments[1]) else {
-    fatalError("Usage: swift scripts/build_icons.swift source.png output.iconset")
+    fatalError("Usage: swift scripts/build_icons.swift source.png output.iconset [transparent|light|dark]")
 }
+let background = arguments.count == 4 ? arguments[3] : "transparent"
+guard ["transparent", "light", "dark"].contains(background) else { fatalError("Invalid icon appearance") }
 let output = URL(fileURLWithPath: arguments[2], isDirectory: true)
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 for points in [16, 32, 128, 256, 512] {
@@ -20,10 +23,20 @@ for points in [16, 32, 128, 256, 512] {
         context.imageInterpolation = .high
         let canvas = NSRect(x: 0, y: 0, width: pixels, height: pixels)
         context.cgContext.clear(canvas)
-        let ratio = CGFloat(pixels) / max(source.size.width, source.size.height)
+        let contentRect: NSRect
+        if background == "transparent" {
+            contentRect = canvas
+        } else {
+            let inset = CGFloat(pixels) * 0.06
+            let tile = canvas.insetBy(dx: inset, dy: inset)
+            (background == "dark" ? NSColor.black : NSColor.white).setFill()
+            NSBezierPath(roundedRect: tile, xRadius: tile.width * 0.225, yRadius: tile.height * 0.225).fill()
+            contentRect = tile.insetBy(dx: tile.width * 0.03, dy: tile.height * 0.03)
+        }
+        let ratio = min(contentRect.width / source.size.width, contentRect.height / source.size.height)
         let size = NSSize(width: source.size.width * ratio, height: source.size.height * ratio)
-        source.draw(in: NSRect(x: (canvas.width - size.width) / 2,
-                              y: (canvas.height - size.height) / 2,
+        source.draw(in: NSRect(x: contentRect.midX - size.width / 2,
+                              y: contentRect.midY - size.height / 2,
                               width: size.width, height: size.height),
                     from: .zero, operation: .sourceOver, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()

@@ -11,6 +11,11 @@ cp "$project_root/App/Info.plist" "$app_path/Contents/Info.plist"
 iconset_path="$project_root/.local/icons/Kukusit.iconset"
 swift "$project_root/scripts/build_icons.swift" "$project_root/App/Assets/AppIcon.png" "$iconset_path"
 iconutil -c icns "$iconset_path" -o "$app_path/Contents/Resources/Kukusit.icns"
+for appearance in Light Dark; do
+  variant_iconset="$project_root/.local/icons/Kukusit${appearance}.iconset"
+  swift "$project_root/scripts/build_icons.swift" "$project_root/App/Assets/AppIcon.png" "$variant_iconset" "${appearance:l}"
+  iconutil -c icns "$variant_iconset" -o "$app_path/Contents/Resources/Kukusit${appearance}.icns"
+done
 cp "$project_root/App/Assets/StatusIcon.svg" "$app_path/Contents/Resources/StatusIcon.svg"
 if [[ -f "$project_root/.local/pose-backend.json" ]]; then
   cp "$project_root/.local/pose-backend.json" "$app_path/Contents/Resources/pose-backend.json"

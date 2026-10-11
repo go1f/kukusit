@@ -3,13 +3,14 @@ import CoreGraphics
 import PostureCore
 
 enum DemoScenario: String, CaseIterable, Identifiable {
-    case clear, headTilt, shoulderShift, turnedAway, croppedShoulder, multiplePeople, away, handNearMouth, lipChange, eyeChange
+    case clear, headTilt, shoulderShift, headAndShoulderTilt, turnedAway, croppedShoulder, multiplePeople, away, handNearMouth, lipChange, eyeChange
     var id: String { rawValue }
     var label: String {
         switch self {
         case .clear: return "脸与双肩"
         case .headTilt: return "持续歪头"
         case .shoulderShift: return "肩线偏移"
+        case .headAndShoulderTilt: return "歪头与高低肩叠加"
         case .turnedAway: return "转头"
         case .croppedShoulder: return "肩部出画"
         case .multiplePeople: return "多个目标"
@@ -59,7 +60,7 @@ enum DemoFrame {
             .rightElbow: JointPoint(Point(0.23, 0.16), confidence: 0.86)
         ]
         if scenario == .croppedShoulder { joints[.leftShoulder] = JointPoint(Point(1.03, 0.43), confidence: 0.22) }
-        if scenario == .shoulderShift { joints[.leftShoulder] = JointPoint(Point(0.72, 0.29), confidence: 0.94) }
+        if scenario == .shoulderShift || scenario == .headAndShoulderTilt { joints[.leftShoulder] = JointPoint(Point(0.72, 0.29), confidence: 0.94) }
         let facePoints = (0..<28).map { index in
             let angle = Double(index) / 28 * 2 * Double.pi
             return Point(0.5 + cos(angle) * 0.065, 0.77 + sin(angle) * 0.13)
@@ -73,7 +74,7 @@ enum DemoFrame {
                                       faceCount: scenario == .away ? 0 : (scenario == .multiplePeople ? 2 : 1),
                                       bodyCount: scenario == .away ? 0 : (scenario == .multiplePeople ? 2 : 1),
                                       faceBox: FaceBox(x: 0.42, y: 0.62, width: 0.16, height: 0.30),
-                                      faceConfidence: 0.98, roll: scenario == .headTilt ? 8.2 : 3.2,
+                                      faceConfidence: 0.98, roll: scenario == .headTilt || scenario == .headAndShoulderTilt ? 8.2 : 3.2,
                                       yaw: scenario == .turnedAway ? 50 : 1.8, pitch: -14.0, joints: joints,
                                       faceLandmarks: facePoints, oral: oral)
         return AnalysisPacket(generation: -1, observation: observation, image: image,

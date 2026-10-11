@@ -12,7 +12,9 @@ final class DiagnosticModel: ObservableObject {
     @Published var frame: AnalysisPacket?
     @Published var metrics: Metrics?
     var mirrored: Bool { get { settings.mirrored } set { settings.mirrored = newValue } }
-    @Published var selectedContext: ViewingContext = .upperMonitor
+    @Published var selectedContext: ViewingContext = .upperMonitor {
+        didSet { if oldValue != selectedContext { cancelOralRecording() } }
+    }
     @Published var profiles: [String: Calibration] = [:]
     @Published var calibrationProgress: Double?
     @Published var calibrationMessage = "看上方外接屏，保持你选定的舒适参考姿态约 20 秒。"
@@ -32,6 +34,11 @@ final class DiagnosticModel: ObservableObject {
     private(set) var renderingImageRequested = false
     private(set) var renderingSkeletonRequested = false
     @Published var monitorState: MonitorState = .inactive
+    @Published private(set) var postureChannels: [ReminderChannelSnapshot] = []
+    @Published private(set) var habitStates: [HabitState] = []
+    let oralSamples: OralSampleStore
+    private var habitsReliable = false
+    private var recoveryConfirmed = false
     @Published private var monitoringBaseline: Calibration?
     @Published var reminderCount = 0
     private(set) var judgmentSampleCounts: [String: Int] = [:]
@@ -45,12 +52,19 @@ final class DiagnosticModel: ObservableObject {
             }
             onSettingsChanged?(oldValue, settings)
             configureCameraAnalysis()
-            if oldValue.handMouthMonitoring != settings.handMouthMonitoring || oldValue.tuning != settings.tuning
+            if oldValue.automaticReminders != settings.automaticReminders
+                || oldValue.handMouthMonitoring != settings.handMouthMonitoring || oldValue.tuning != settings.tuning
                 || oldValue.experimentalLipMonitoring != settings.experimentalLipMonitoring
-                || oldValue.experimentalFaceMonitoring != settings.experimentalFaceMonitoring { habitEngine.reset() }
+                || oldValue.experimentalFaceMonitoring != settings.experimentalFaceMonitoring
+                || oldValue.mouthShiftMonitoring != settings.mouthShiftMonitoring
+                || oldValue.oralPoseMonitoring != settings.oralPoseMonitoring {
+                habitEngine.reset(); habitStates = []; habitsReliable = false; recoveryConfirmed = false
+            }
+            refreshReminderPresentation()
         }
     }
     var onReminderEvent: ((ReminderEvent) -> Void)?
+    var onReminderAlertsChanged: (([MonitoringAlert], Bool) -> Void)?
     var onSettingsChanged: ((MonitorSettings, MonitorSettings) -> Void)?
     var onWindowClosed: (() -> Void)?
     private var reminderEngine = ReminderEngine()
@@ -65,6 +79,14 @@ final class DiagnosticModel: ObservableObject {
     var cameraSession: AVCaptureSession { camera.previewSession }
     @Published private(set) var computeSummary = "Apple Vision 自动调度"
     var facialReferenceAvailable: Bool { (monitoringBaseline ?? matchingProfile)?.facialReference != nil }
+    private var currentOralExamples: OralPoseExamples? {
+        guard settings.oralPoseMonitoring,
+              var library = oralSamples.library(context: monitoringBaseline?.context ?? selectedContext,
+                signature: frame?.observation.cameraSignature) else { return nil }
+        library.maximumDistance = settings.tuning.normalized.oralMatchDistance
+        library.minimumMargin = settings.tuning.normalized.oralMatchMargin
+        return library
+    }
     var facialMetricsSummary: String {
         guard observationIsFresh, let f = frame?.observation.oral?.features else { return "口唇特征暂不可用" }
         return String(format: "开口比例 %.3f · 口唇高度比例 %.3f · 嘴角横移 %.3f", f.mouthOpening, f.outerLipAspect, f.mouthShift)
@@ -86,6 +108,7 @@ final class DiagnosticModel: ObservableObject {
     private var pendingStart = false
 
     init(demo: Bool = false) {
+        oralSamples = OralSampleStore(persistent: !demo && !CommandLine.arguments.contains("--camera-check"))
         do {
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                   appropriateFor: nil, create: true).appendingPathComponent("PostureDiagnostics", isDirectory: true)
@@ -117,6 +140,8 @@ final class DiagnosticModel: ObservableObject {
                 self.clearCurrentObservation()
                 self.cancelCalibration(message: "观察已暂停，校准未保存。")
                 self.applyReminderResult(self.reminderEngine.reset())
+                self.habitEngine.reset(); self.habitStates = []; self.habitsReliable = false
+                self.oralSamples.cancel(); self.refreshReminderPresentation()
             }
         }
         camera.onFrame = { [weak self] packet in
@@ -148,7 +173,24 @@ final class DiagnosticModel: ObservableObject {
               profile.matchesFace(signature) else { return nil }
         return profile
     }
-    var canCalibrate: Bool { !isDemo && status == .running && observationIsFresh && metrics?.faceUsable == true && collector == nil }
+    var canCalibrate: Bool { !isDemo && status == .running && observationIsFresh && metrics?.faceUsable == true && collector == nil && !oralSamples.isRecording }
+    var canRecordOralPose: Bool { !isDemo && status == .running && observationIsFresh && metrics?.faceUsable == true && collector == nil && !oralSamples.isRecording }
+    var habitTimingSummary: String {
+        habitStates.map { state in
+            let title: String
+            switch state.kind {
+            case .handMouth: title = "手口接近"
+            case .lipChange: title = "口唇变化"
+            case .facialShift: title = "嘴角偏移"
+            case .eyelidChange: title = "眼周变化"
+            case .jawAppearance: title = "下颌示范"
+            case .upperLipAppearance: title = "上唇示范"
+            case .lowerLipAppearance: title = "下唇示范"
+            case .tongueAppearance: title = "舌部示范"
+            }
+            return title + " " + String(Int(state.elapsedSeconds)) + " 秒" + (state.recovering ? " · 待确认恢复" : "")
+        }.joined(separator: "；")
+    }
     var hasStarted: Bool { status.isActive || isDemo || pendingStart }
     var monitorSummary: String {
         if !hasStarted { return status.title }
@@ -163,6 +205,15 @@ final class DiagnosticModel: ObservableObject {
     }
     var monitorDetail: String? {
         guard hasStarted, collector == nil, settings.automaticReminders else { return nil }
+        let independent = postureChannels.filter { $0.isUnresolved }.map { channel -> String in
+            let title = channel.channel == .head ? "头部" : "肩线"
+            let pending: String
+            if case .recovering = channel.state { pending = " · 待确认恢复" }
+            else if !channel.isObservable { pending = " · 暂时看不清，保留计时" }
+            else { pending = channel.hasReminded ? " · 未恢复" : "" }
+            return title + " " + String(Int(channel.accumulatedSeconds)) + " 秒" + pending
+        }
+        if !independent.isEmpty { return independent.joined(separator: "；") + "（独立计时）" }
         if case .waiting(_, let seconds) = monitorState, seconds > 0 {
             return "已累计偏离 \(seconds) 秒；短暂波动保留计时，这段时间不累计。"
         }
@@ -218,6 +269,7 @@ final class DiagnosticModel: ObservableObject {
         settings.resumeOnLaunch = false
         applyReminderResult(reminderEngine.reset())
         habitEngine.reset(); habitSummary = "口部观察已暂停"; nextJawCheck = nil
+        habitStates = []; habitsReliable = false; oralSamples.cancel(); refreshReminderPresentation()
     }
     func backendDidChange() {
         settings.bodyBackend = bodyBackend
@@ -250,9 +302,11 @@ final class DiagnosticModel: ObservableObject {
         configureCameraAnalysis()
         calibrationProgress = 0
         habitEngine.reset()
+        habitStates = []; habitsReliable = false; oralSamples.cancel()
         calibrationMessage = "请看\(selectedContext.label)中心，嘴唇自然放松、不讲话，保持舒适参考姿态。"
         notice = nil
         applyReminderResult(reminderEngine.reset())
+        refreshReminderPresentation()
     }
     func cancelCalibration(message: String = "校准已取消，保留之前的参考。") {
         if collector != nil { calibrationMessage = message }
@@ -296,15 +350,28 @@ final class DiagnosticModel: ObservableObject {
         let sorted = latencies.sorted()
         p95Milliseconds = sorted[min(sorted.count - 1, Int(Double(sorted.count - 1) * 0.95))]
         collector?.consume(packet.observation, metrics: evaluated)
+        oralSamples.consume(packet.observation, metrics: evaluated)
         evaluateReminder(packet, metrics: evaluated)
-        if settings.automaticReminders, collector == nil,
-           settings.handMouthMonitoring || settings.experimentalLipMonitoring || settings.experimentalFaceMonitoring {
-            if let kind = habitEngine.observe(packet.observation, metrics: evaluated,
-                reference: monitoringBaseline?.facialReference, tuning: settings.tuning,
+        if settings.automaticReminders, collector == nil, !oralSamples.isRecording,
+           settings.handMouthMonitoring || settings.experimentalLipMonitoring || settings.experimentalFaceMonitoring
+                || settings.mouthShiftMonitoring || settings.oralPoseMonitoring {
+            let previousConfirmed = habitStates.filter(\.confirmed)
+            let result = habitEngine.observeDetailed(packet.observation, metrics: evaluated,
+                reference: oralSamples.library(context: monitoringBaseline?.context ?? selectedContext,
+                    signature: packet.observation.cameraSignature)?.reference ?? monitoringBaseline?.facialReference,
+                tuning: settings.tuning,
                 hand: settings.handMouthMonitoring, lips: settings.experimentalLipMonitoring,
-                face: settings.experimentalFaceMonitoring) { onReminderEvent?(.nudge(kind.message)) }
+                face: settings.experimentalFaceMonitoring,
+                examples: currentOralExamples,
+                mouthShift: settings.mouthShiftMonitoring)
+            habitStates = result.states; habitsReliable = result.reliable
+            if result.reliable && !previousConfirmed.isEmpty && result.confirmedStates.isEmpty { recoveryConfirmed = true }
             habitSummary = habitEngine.summary
-        } else if !isDemo { habitSummary = "口部自动观察已关闭或暂缓" }
+        } else {
+            habitEngine.reset(); habitStates = []; habitsReliable = false
+            if !isDemo { habitSummary = "口部自动观察已关闭或暂缓" }
+        }
+        refreshReminderPresentation()
         judgmentSampleCounts[monitorSummary, default: 0] += 1
     }
 
@@ -313,7 +380,7 @@ final class DiagnosticModel: ObservableObject {
         if hasStarted, let startedAt { elapsedSeconds = now - startedAt }
         if hasStarted, elapsedSeconds > 0 { averageAppCPU = max(0, (processCPUSeconds() - cpuOrigin) / elapsedSeconds * 100) }
         if !isDemo, status == .running, settings.automaticReminders, settings.jawSelfCheck,
-           collector == nil, observationIsFresh, metrics?.faceUsable == true,
+           collector == nil, !oralSamples.isRecording, observationIsFresh, metrics?.faceUsable == true,
            abs(metrics?.yaw ?? 90) <= 20 {
             if nextJawCheck == nil { nextJawCheck = now + settings.tuning.normalized.jawCheckSeconds }
             if let due = nextJawCheck, now >= due {
@@ -326,6 +393,11 @@ final class DiagnosticModel: ObservableObject {
             analysisHz = 0
             applyReminderResult(reminderEngine.observe(ReminderInput(timestamp: now, contextID: "stale",
                                                                     reliable: false, quietReason: "画面过期，保持安静")))
+            habitsReliable = false; refreshReminderPresentation()
+        }
+        if oralSamples.tick(at: now) {
+            configureCameraAnalysis(); habitEngine.reset(); habitStates = []; habitsReliable = false
+            applyReminderResult(reminderEngine.reset()); refreshReminderPresentation()
         }
         if let collector {
             calibrationProgress = collector.progress(at: now)
@@ -347,6 +419,7 @@ final class DiagnosticModel: ObservableObject {
                 self.collector = nil; calibrationProgress = nil
                 configureCameraAnalysis()
                 applyReminderResult(reminderEngine.reset())
+                refreshReminderPresentation()
             }
         }
     }
@@ -370,9 +443,10 @@ final class DiagnosticModel: ObservableObject {
     }
     private func configureCameraAnalysis() {
         var tuning = settings.tuning.normalized
-        if collector != nil { tuning.faceHertz = max(6, tuning.faceHertz) }
+        if collector != nil || oralSamples.isRecording { tuning.faceHertz = max(6, tuning.faceHertz) }
         camera.configureAnalysis(tuning: tuning, hands: settings.handMouthMonitoring,
-            oral: settings.experimentalLipMonitoring || settings.experimentalFaceMonitoring || collector != nil)
+            oral: settings.experimentalLipMonitoring || settings.experimentalFaceMonitoring || settings.mouthShiftMonitoring
+                || settings.oralPoseMonitoring || oralSamples.isRecording || collector != nil)
     }
     func applySensitivityPreset(_ preset: Int) {
         var tuning = settings.tuning
@@ -408,13 +482,52 @@ final class DiagnosticModel: ObservableObject {
     }
     private func applyReminderResult(_ result: ReminderResult) {
         if monitorState != result.state { monitorState = result.state }
-        if let event = result.event {
+        postureChannels = result.channels
+        for event in result.events {
             if case .correction = event { reminderCount += 1 }
-            onReminderEvent?(event)
+            if case .recovered = event { recoveryConfirmed = true }
         }
     }
+    private func refreshReminderPresentation() {
+        var alerts: [MonitoringAlert] = []
+        if hasStarted && settings.automaticReminders && collector == nil && !oralSamples.isRecording {
+            for channel in postureChannels where channel.hasReminded && channel.isUnresolved && channel.isObservable {
+                guard let kind = channel.kind else { continue }
+                let recovering: Bool
+                if case .recovering = channel.state { recovering = true } else { recovering = false }
+                alerts.append(MonitoringAlert(id: "posture." + channel.channel.rawValue,
+                    title: channel.channel == .head ? "歪头" : "肩线偏移", message: kind.message,
+                    seconds: Int(channel.accumulatedSeconds), recovering: recovering))
+            }
+            if habitsReliable {
+                for state in habitStates where state.confirmed {
+                    let message = state.exampleLabel.map { "外观接近“\($0)”示范，轻轻放松口唇和下颌。" } ?? state.kind.message
+                    alerts.append(MonitoringAlert(id: "habit." + state.kind.rawValue, title: "口部变化", message: message,
+                        seconds: Int(state.elapsedSeconds), recovering: state.recovering))
+                }
+            }
+        }
+        let oralEnabled = settings.handMouthMonitoring || settings.experimentalLipMonitoring || settings.experimentalFaceMonitoring
+            || settings.mouthShiftMonitoring || settings.oralPoseMonitoring
+        let recoveredSafely = recoveryConfirmed && !postureChannels.contains(where: \.isUnresolved)
+            && habitStates.isEmpty && (!oralEnabled || habitsReliable)
+            && postureChannels.first(where: { $0.channel == .head })?.isObservable == true
+        onReminderAlertsChanged?(alerts, recoveredSafely)
+        recoveryConfirmed = false
+    }
+    func beginOralRecording(action: OralPoseAction?) {
+        guard canRecordOralPose, let signature = frame?.observation.cameraSignature else { return }
+        oralSamples.begin(context: selectedContext, signature: signature, action: action, label: oralSamples.sampleLabel)
+        habitEngine.reset(); habitStates = []; habitsReliable = false
+        applyReminderResult(reminderEngine.reset()); refreshReminderPresentation(); configureCameraAnalysis()
+    }
+    func cancelOralRecording() { oralSamples.cancel(); configureCameraAnalysis(); refreshReminderPresentation() }
+    func removeOralExamples() {
+        oralSamples.remove(context: selectedContext); habitEngine.reset(); habitStates = []; habitsReliable = false
+        refreshReminderPresentation()
+    }
     private func evaluateReminder(_ packet: AnalysisPacket, metrics: Metrics) {
-        guard settings.automaticReminders, collector == nil else {
+        guard settings.automaticReminders, collector == nil, !oralSamples.isRecording else {
             applyReminderResult(reminderEngine.reset()); return
         }
         let observation = packet.observation
@@ -432,6 +545,7 @@ final class DiagnosticModel: ObservableObject {
     private func resetStats() {
         frameCount = 0; faceValidCount = 0; shoulderValidCount = 0
         firstVideoSeconds = nil; firstAnalysisSeconds = nil; nextJawCheck = nil; habitEngine.reset()
+        habitStates = []; habitsReliable = false; recoveryConfirmed = false
         cpuOrigin = processCPUSeconds(); averageAppCPU = 0
         judgmentSampleCounts = [:]
         analysisHz = 0; p95Milliseconds = 0; elapsedSeconds = 0
@@ -485,6 +599,7 @@ final class DiagnosticModel: ObservableObject {
     }
 
     func startDemo() {
+        oralSamples.cancel()
         camera.stop(reason: "演示模式：摄像头未启动。")
         cancelCalibration()
         resetStats()

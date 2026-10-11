@@ -9,7 +9,7 @@ final class ReminderChecks {
     }
     private func feed(_ engine: inout ReminderEngine, start: Double, seconds: Double,
                       make: (Double) -> ReminderInput) -> [ReminderEvent] {
-        (0..<Int(seconds * 6)).compactMap { engine.observe(make(start + Double($0) / 6)).event }
+        (0..<Int(seconds * 6)).flatMap { engine.observe(make(start + Double($0) / 6)).events }
     }
     func testShortDeviationDoesNotRemind() {
         var engine = ReminderEngine()
@@ -69,7 +69,7 @@ final class ReminderChecks {
         var engine = ReminderEngine()
         let events = feed(&engine, start: 0, seconds: 30) { self.input($0, roll: 12, shoulder: 12) }
         expectTrue(events.contains(.correction(.shoulders)))
-        expectFalse(events.contains(.correction(.headTowardLeft)))
+        expectTrue(events.contains(.correction(.headTowardLeft)))
     }
     func testRecoveryHappensOnceAndUnknownIsNotRecovery() {
         var engine = ReminderEngine()
@@ -249,7 +249,8 @@ final class ReminderChecks {
     func testShouldersDoNotCancelVisibleHeadDeviation() {
         var engine = ReminderEngine()
         let events = feed(&engine, start: 0, seconds: 30) { self.input($0, roll: 5, shoulder: 4) }
-        expectTrue(events.contains(.correction(.shoulders)))
+        expectTrue(events.contains(.correction(.headTowardLeft)))
+        expectFalse(events.contains(.correction(.shoulders)))
         expectFalse(engine.state == .normal)
         engine = ReminderEngine()
         _ = feed(&engine, start: 0, seconds: 3) { self.input($0, roll: 4, shoulder: 1.5) }
@@ -260,5 +261,87 @@ final class ReminderChecks {
         let events = feed(&engine, start: 0, seconds: 30) { self.input($0, roll: 0, shoulder: 4) }
         expectEqual(engine.state, .normal)
         expectFalse(events.contains { if case .correction = $0 { return true }; return false })
+    }
+
+    private func channel(_ result: ReminderResult, _ kind: ReminderChannel) -> ReminderChannelSnapshot {
+        result.channels.first { $0.channel == kind }!
+    }
+    private func sensitiveEngine() -> ReminderEngine {
+        var configuration = ReminderConfiguration()
+        configuration.sustainedSeconds = 5
+        return ReminderEngine(configuration: configuration)
+    }
+    func testHeadAndShouldersAccumulateIndependently() {
+        var engine = sensitiveEngine()
+        _ = feed(&engine, start: 0, seconds: 3) { self.input($0) }
+        let headEvents = feed(&engine, start: 3, seconds: 3) { self.input($0, shoulder: 12) }
+        expectTrue(headEvents.contains(.correction(.headTowardLeft)))
+        expectFalse(headEvents.contains(.correction(.shoulders)))
+        let before = engine.observe(input(6, shoulder: 12))
+        let head = channel(before, .head), shoulders = channel(before, .shoulders)
+        expectTrue(head.accumulatedSeconds > shoulders.accumulatedSeconds + 2)
+        expectTrue(head.hasReminded && head.isUnresolved && head.isObservable)
+        expectTrue(shoulders.isUnresolved && !shoulders.hasReminded)
+        let later = feed(&engine, start: 6.2, seconds: 4) { self.input($0, shoulder: 12) }
+        expectTrue(later.contains(.correction(.shoulders)))
+        let both = engine.observe(input(10.3, shoulder: 12))
+        expectTrue(both.channels.allSatisfy { $0.hasReminded && $0.isUnresolved && $0.isObservable })
+    }
+    func testRecoveringOneChannelKeepsTheOtherUnresolved() {
+        var engine = sensitiveEngine()
+        let events = feed(&engine, start: 0, seconds: 8) { self.input($0, shoulder: 12) }
+        expectTrue(events.contains(.correction(.headTowardLeft)))
+        expectTrue(events.contains(.correction(.shoulders)))
+        let oneNormal = feed(&engine, start: 8, seconds: 3) { self.input($0, roll: 0, shoulder: 12) }
+        expectFalse(oneNormal.contains(.recovered))
+        let continuing = engine.observe(input(11, roll: 0, shoulder: 12))
+        expectFalse(channel(continuing, .head).isUnresolved)
+        expectTrue(channel(continuing, .shoulders).hasReminded)
+        expectTrue(channel(continuing, .shoulders).accumulatedSeconds >= 10)
+        let final = feed(&engine, start: 11.2, seconds: 3) { self.input($0, roll: 0, shoulder: 0) }
+        expectEqual(final.filter { $0 == .recovered }.count, 1)
+    }
+    func testShortReturnDoesNotResetCrossingChannels() {
+        var engine = sensitiveEngine()
+        _ = feed(&engine, start: 0, seconds: 4) { self.input($0) }
+        _ = feed(&engine, start: 4, seconds: 0.8) { self.input($0, roll: 0, shoulder: 12) }
+        let pending = engine.observe(input(4.8, roll: 0, shoulder: 12))
+        expectTrue(channel(pending, .head).isUnresolved)
+        expectTrue(channel(pending, .head).accumulatedSeconds >= 3)
+        let events = feed(&engine, start: 5, seconds: 3) { self.input($0, shoulder: 12) }
+        expectTrue(events.contains(.correction(.headTowardLeft)))
+    }
+    func testHeadDirectionSwitchKeepsItsTimer() {
+        var engine = sensitiveEngine()
+        _ = feed(&engine, start: 0, seconds: 4) { self.input($0) }
+        let events = feed(&engine, start: 4, seconds: 4) { self.input($0, roll: -14) }
+        expectTrue(events.contains(.correction(.headTowardRight)))
+        let result = engine.observe(input(8, roll: -14))
+        expectTrue(channel(result, .head).accumulatedSeconds >= 6)
+        expectEqual(channel(result, .head).kind, .headTowardRight)
+    }
+    func testBriefShoulderLossPreservesBothIndependentTimers() {
+        var engine = sensitiveEngine()
+        _ = feed(&engine, start: 0, seconds: 4) { self.input($0, shoulder: 12) }
+        _ = feed(&engine, start: 4, seconds: 1) { self.input($0, shoulder: nil) }
+        let missing = engine.observe(input(5, shoulder: nil))
+        expectTrue(channel(missing, .head).isObservable)
+        expectFalse(channel(missing, .shoulders).isObservable)
+        expectTrue(channel(missing, .shoulders).isUnresolved)
+        expectTrue(channel(missing, .shoulders).accumulatedSeconds >= 3)
+        let events = feed(&engine, start: 5.2, seconds: 3) { self.input($0, shoulder: 12) }
+        expectTrue(events.contains(.correction(.headTowardLeft)))
+        expectTrue(events.contains(.correction(.shoulders)))
+        let result = engine.observe(input(8.3, shoulder: 12))
+        expectTrue(channel(result, .head).accumulatedSeconds > channel(result, .shoulders).accumulatedSeconds)
+    }
+    func testShoulderDirectionSwitchKeepsItsTimer() {
+        var engine = sensitiveEngine()
+        _ = feed(&engine, start: 0, seconds: 4) { self.input($0, roll: 0, shoulder: 12) }
+        let events = feed(&engine, start: 4, seconds: 4) { self.input($0, roll: 0, shoulder: -12) }
+        expectTrue(events.contains(.correction(.shoulders)))
+        let result = engine.observe(input(8, roll: 0, shoulder: -12))
+        expectTrue(channel(result, .shoulders).accumulatedSeconds >= 6)
+        expectFalse(channel(result, .head).isUnresolved)
     }
 }

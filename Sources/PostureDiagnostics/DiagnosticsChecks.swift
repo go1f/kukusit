@@ -9,6 +9,9 @@ enum DiagnosticsChecks {
         do {
             let legacy = Data(#"{"sustainedSeconds":25,"cooldownSeconds":180,"pipOnTop":false,"pipSize":"large","pipScreenID":"office","resumeOnLaunch":false}"#.utf8)
             let restored = try JSONDecoder().decode(MonitorSettings.self, from: legacy)
+            precondition(!MonitorSettings().mirrored && !restored.mirrored)
+            let mirroredPreference = try JSONDecoder().decode(MonitorSettings.self, from: Data(#"{"mirrored":true}"#.utf8))
+            precondition(mirroredPreference.mirrored)
             precondition(restored.tuning.sustainedSeconds == 5 && restored.tuning.headEnterDegrees == 3)
             precondition(!restored.pipOnTop && restored.pipSize == .large && restored.pipScreenID == "office" && !restored.resumeOnLaunch)
             var customized = restored
@@ -67,5 +70,53 @@ enum DiagnosticsChecks {
             print(String(data: try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]), encoding: .utf8)!)
             exit(0)
         } catch { fputs("Pipeline check failed: \(error)\n", stderr); exit(1) }
+    }
+    static func oralStore() {
+        let signature = "synthetic-demo"
+        func feed(_ store: OralSampleStore, _ times: [Double], valid: Bool = true, scenario: DemoScenario = .clear) {
+            for time in times {
+                var observation = DemoFrame.packet(scenario: scenario, timestamp: time).observation
+                if !valid { observation.faceCount = 0; observation.faceConfidence = 0 }
+                store.consume(observation, metrics: QualityGate.evaluate(observation))
+            }
+        }
+        let continuous = OralSampleStore(persistent: false)
+        continuous.begin(context: .upperMonitor, signature: signature, action: nil, label: "natural", at: 0)
+        feed(continuous, (0...17).map { Double($0) / 6 })
+        precondition(continuous.tick(at: 3))
+        precondition(continuous.library(context: .upperMonitor, signature: signature)?.hasNeutralReference == true)
+        let interrupted = OralSampleStore(persistent: false)
+        interrupted.begin(context: .upperMonitor, signature: signature, action: nil, label: "natural", at: 0)
+        feed(interrupted, (0...7).map { Double($0) / 6 })
+        feed(interrupted, [1.3], valid: false)
+        feed(interrupted, (0...8).map { 1.5 + Double($0) / 6 })
+        precondition(interrupted.tick(at: 3))
+        precondition(interrupted.libraries.isEmpty)
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("kukusit-store-check-" + UUID().uuidString)
+        do {
+            try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            let url = temporary.appendingPathComponent("oral-examples-v1.json")
+            let store = OralSampleStore(persistent: true, archiveURL: url)
+            store.begin(context: .upperMonitor, signature: signature, action: nil, label: "natural", at: 0)
+            feed(store, (0...17).map { Double($0) / 6 }); precondition(store.tick(at: 3))
+            store.begin(context: .upperMonitor, signature: signature, action: .lowerLip, label: "synthetic lower lip", at: 4)
+            feed(store, (0...17).map { 4 + Double($0) / 6 }, scenario: .lipChange)
+            precondition(store.tick(at: 7))
+            precondition(store.library(context: .upperMonitor, signature: signature)?.sampleCount(for: .lowerLip) ?? 0 >= 6)
+            precondition(FileManager.default.fileExists(atPath: url.path))
+            let permissions = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+            precondition(permissions?.intValue == 0o600)
+            let copy = OralSampleStore(persistent: true, archiveURL: url)
+            precondition(copy.libraries == store.libraries)
+            let blocker = temporary.appendingPathComponent("not-a-directory")
+            try Data().write(to: blocker)
+            let unavailable = OralSampleStore(persistent: true, archiveURL: blocker.appendingPathComponent("samples.json"))
+            unavailable.begin(context: .upperMonitor, signature: signature, action: nil, label: "natural", at: 0)
+            feed(unavailable, (0...17).map { Double($0) / 6 }); precondition(unavailable.tick(at: 3))
+            precondition(unavailable.libraries.isEmpty && unavailable.message.hasPrefix("保存示范失败"))
+            print("{\"passed\":true,\"input\":\"synthetic observations; no camera or personal data\",\"checks\":[\"continuous coverage\",\"interrupted segments rejected\",\"private persistence roundtrip\",\"storage failure rolls back\"]}")
+            exit(0)
+        } catch { fputs("Oral store check failed: \(error)\n", stderr); exit(1) }
     }
 }

@@ -9,7 +9,8 @@ runtime_sources="$(shasum -a 256 pose-worker/pose_worker.py pose-worker/requirem
 if [[ ! -x .local/frozen/pose-worker/pose-worker || ! -f .local/frozen/source.sha256 ]]    || [[ "$(cat .local/frozen/source.sha256)" != "$runtime_sources" ]]; then
   zsh scripts/build_pose_runtime.sh
 fi
-zsh scripts/build_app.sh
+# Sign only the completed portable bundle with the developer identity.
+KUKUSIT_SIGN_IDENTITY=- zsh scripts/build_app.sh
 release_app="$project_root/release/Kukusit.app"
 mkdir -p release
 if [[ -d "$release_app" ]]; then mv "$release_app" "$project_root/.local/previous-release-app-$(date +%s)"; fi

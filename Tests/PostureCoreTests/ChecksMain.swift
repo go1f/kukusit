@@ -73,7 +73,13 @@ struct ChecksMain {
             ("jitter stays quiet", reminders.testJitterStaysQuiet),
             ("viewing context resets persistence", reminders.testSwitchingReferencesBreaksPersistence),
             ("shoulder changes do not invent head direction", reminders.testShoulderShiftDoesNotInventHeadDirection),
-            ("whole-body lean classified separately", reminders.testWholeBodyLeanDoesNotInventIndependentNeckTilt),
+            ("head and shoulders overlap", reminders.testWholeBodyLeanDoesNotInventIndependentNeckTilt),
+            ("head and shoulders independent timers", reminders.testHeadAndShouldersAccumulateIndependently),
+            ("one recovery preserves other channel", reminders.testRecoveringOneChannelKeepsTheOtherUnresolved),
+            ("crossing channels survive short return", reminders.testShortReturnDoesNotResetCrossingChannels),
+            ("head direction switch preserves timer", reminders.testHeadDirectionSwitchKeepsItsTimer),
+            ("brief shoulder loss preserves channels", reminders.testBriefShoulderLossPreservesBothIndependentTimers),
+            ("shoulder direction switch preserves timer", reminders.testShoulderDirectionSwitchKeepsItsTimer),
             ("recovery once; unknown not recovery", reminders.testRecoveryHappensOnceAndUnknownIsNotRecovery),
             ("pause preserves cooldown", reminders.testPauseResetKeepsCooldown),
             ("hysteresis preserves episode", reminders.testHysteresisKeepsEpisodeWithoutRepeatedAlerts),
@@ -116,7 +122,14 @@ struct ChecksMain {
             ("personal asymmetry baseline", habits.testPersonalAsymmetryIsNotAutomaticAbnormality),
             ("lip reference and talking", habits.testLipChangesNeedReferenceAndExcludeTalking),
             ("blink versus sustained eye change", habits.testShortBlinkAndLongEyeChangeAreSeparated),
-            ("head reference survives shoulder switch", habits.testFaceReferenceSurvivesShoulderBackendSwitch)
+            ("head reference survives shoulder switch", habits.testFaceReferenceSurvivesShoulderBackendSwitch),
+            ("open mouth and parallel habit timers", habits.testOpenMouthShiftAndParallelHabitTimers),
+            ("oral short recovery preserves evidence", habits.testHabitShortRecoveryRetainsCountAndConfirmation),
+            ("oral dropout is not recovery", habits.testHabitDropoutFreezesAndNeverConfirmsRecovery),
+            ("legacy facial feature compatibility", habits.testLegacyFacialFeaturesDecodeAndNewGeometryRoundTrip),
+            ("personal examples require neutral and margin", habits.testPersonalPrototypeRequiresNeutralDistanceAndMargin),
+            ("examples independent from lip experiment", habits.testPersonalPrototypeRunsWithoutGenericLipExperiment),
+            ("two Hz oral analysis and gaps", habits.testTwoHertzMouthAndExamplesReachThreshold)
         ]
         for (name, check) in checks { try check(); print("PASS: \(name)") }
         print("\(checks.count) / \(checks.count) core checks passed")

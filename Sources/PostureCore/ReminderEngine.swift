@@ -103,32 +103,123 @@ public struct ReminderInput: Sendable {
     }
 }
 
+public enum ReminderChannel: String, Codable, CaseIterable, Sendable {
+    case head, shoulders
+}
+
+public struct ReminderChannelSnapshot: Equatable, Sendable {
+    public let channel: ReminderChannel
+    public let kind: ReminderKind?
+    public let state: MonitorState
+    public let accumulatedSeconds: Double
+    public let hasReminded: Bool
+    public let isUnresolved: Bool
+    // Each channel can become unavailable independently. Missing shoulders must
+    // not hide a reliable head reminder, and missing evidence is never recovery.
+    public let isObservable: Bool
+}
+
 public struct ReminderResult: Sendable {
     public let state: MonitorState
     public let event: ReminderEvent?
+    public let channels: [ReminderChannelSnapshot]
+    public let events: [ReminderEvent]
+    public init(state: MonitorState, event: ReminderEvent?,
+                channels: [ReminderChannelSnapshot] = [], events: [ReminderEvent] = []) {
+        self.state = state; self.channels = channels
+        self.events = events.isEmpty ? event.map { [$0] } ?? [] : events
+        self.event = event ?? self.events.first
+    }
 }
 
 public struct ReminderEngine: Sendable {
     public var configuration: ReminderConfiguration
     public private(set) var state: MonitorState = .inactive
     private var previousTimestamp: Double?
-    private var previousEligibleTimestamp: Double?
     private var contextID: String?
     private var history: [ReminderInput] = []
-    private var candidate: ReminderKind?
-    private var badSeconds = 0.0
-    private var goodSeconds = 0.0
-    private var previousNormalTimestamp: Double?
-    private var suspendedSince: Double?
-    private var episode: ReminderKind?
-    private var lastReminderAt: Double?
+    private var head = ChannelEvidence(channel: .head)
+    private var shoulders = ChannelEvidence(channel: .shoulders)
     public init(configuration: ReminderConfiguration = ReminderConfiguration()) { self.configuration = configuration }
 
+    private struct ChannelEvidence: Sendable {
+        let channel: ReminderChannel
+        var state: MonitorState = .inactive
+        var candidate: ReminderKind?
+        var episode: ReminderKind?
+        var badSeconds = 0.0
+        var goodSeconds = 0.0
+        var previousEligibleTimestamp: Double?
+        var previousNormalTimestamp: Double?
+        var suspendedSince: Double?
+        var lastReminderAt: Double?
+        var observable = false
+        var activeKind: ReminderKind? { candidate ?? episode }
+        var snapshot: ReminderChannelSnapshot {
+            ReminderChannelSnapshot(channel: channel, kind: activeKind, state: state,
+                accumulatedSeconds: badSeconds, hasReminded: episode != nil,
+                isUnresolved: activeKind != nil, isObservable: observable)
+        }
+        mutating func clearEvidence(clearEpisode: Bool = false) {
+            candidate = nil; badSeconds = 0; goodSeconds = 0
+            previousEligibleTimestamp = nil; previousNormalTimestamp = nil; suspendedSince = nil
+            observable = false
+            if clearEpisode { episode = nil }
+        }
+        mutating func breakContinuity() {
+            previousEligibleTimestamp = nil; previousNormalTimestamp = nil; goodSeconds = 0
+        }
+        mutating func suspend(_ reason: String, at timestamp: Double, configuration: ReminderConfiguration) {
+            if suspendedSince == nil { suspendedSince = timestamp }
+            breakContinuity(); observable = false
+            if timestamp - (suspendedSince ?? timestamp) + 0.000001 >= configuration.lossGraceSeconds {
+                candidate = nil; badSeconds = 0
+                state = .unknown(reason)
+            } else { state = .waiting(reason, accumulatedSeconds: Int(badSeconds)) }
+        }
+        mutating func normal(at timestamp: Double, configuration: ReminderConfiguration) {
+            observable = true; suspendedSince = nil; previousEligibleTimestamp = nil
+            guard let active = activeKind else {
+                goodSeconds = 0; previousNormalTimestamp = nil; state = .normal
+                return
+            }
+            goodSeconds += previousNormalTimestamp.map { min(configuration.maximumGap, timestamp - $0) } ?? 0
+            previousNormalTimestamp = timestamp
+            if goodSeconds + 0.000001 < configuration.recoverySeconds {
+                state = .recovering(active, accumulatedSeconds: Int(badSeconds))
+            } else {
+                candidate = nil; episode = nil; badSeconds = 0
+                goodSeconds = 0; previousNormalTimestamp = nil; state = .normal
+            }
+        }
+        mutating func abnormal(kind: ReminderKind, at timestamp: Double,
+                               configuration: ReminderConfiguration) -> ReminderEvent? {
+            observable = true; suspendedSince = nil; goodSeconds = 0; previousNormalTimestamp = nil
+            // Direction changes change the instruction, not the head channel's
+            // accumulated time. Head and shoulders never share this evidence.
+            let delta = previousEligibleTimestamp.map { min(configuration.maximumGap, timestamp - $0) } ?? 0
+            if candidate != nil { badSeconds += delta }
+            candidate = kind
+            if episode != nil { episode = kind }
+            previousEligibleTimestamp = timestamp
+            guard badSeconds + 0.000001 >= configuration.sustainedSeconds else {
+                state = .candidate(kind, seconds: Int(badSeconds)); return nil
+            }
+            state = .deviating(kind)
+            if lastReminderAt.map({ timestamp - $0 >= configuration.cooldownSeconds }) ?? true {
+                lastReminderAt = timestamp; episode = kind
+                return .correction(kind)
+            }
+            return nil
+        }
+    }
+
     public mutating func reset() -> ReminderResult {
-        previousTimestamp = nil; contextID = nil; clearEvidence()
-        episode = nil; state = .inactive
-        // Cooldown survives pause, calibration and setting changes.
-        return ReminderResult(state: state, event: .quiet)
+        previousTimestamp = nil; contextID = nil; history = []
+        head.clearEvidence(clearEpisode: true); shoulders.clearEvidence(clearEpisode: true)
+        head.state = .inactive; shoulders.state = .inactive; state = .inactive
+        // Each channel's cooldown survives pause, calibration and setting changes.
+        return result(events: [.quiet])
     }
 
     public mutating func observe(_ input: ReminderInput) -> ReminderResult {
@@ -138,13 +229,16 @@ public struct ReminderEngine: Sendable {
         previousTimestamp = input.timestamp
         if contextID != input.contextID {
             let wasConfigured = contextID != nil
-            contextID = input.contextID; clearEvidence(); episode = nil
+            contextID = input.contextID; history = []
+            head.clearEvidence(clearEpisode: true); shoulders.clearEvidence(clearEpisode: true)
             if wasConfigured { return quiet("观看情境已切换，重新观察") }
         }
         if gap > configuration.maximumGap {
-            // Do not count time with no observations, but tolerate brief pipeline stalls.
-            previousEligibleTimestamp = nil; previousNormalTimestamp = nil; goodSeconds = 0
-            if gap > configuration.lossGraceSeconds { clearEvidence(); episode = nil }
+            // No channel accrues unobserved time, including a brief pipeline stall.
+            head.breakContinuity(); shoulders.breakContinuity()
+            if gap > configuration.lossGraceSeconds {
+                history = []; head.clearEvidence(clearEpisode: true); shoulders.clearEvidence(clearEpisode: true)
+            }
         }
         guard input.reliable else {
             return input.allowsBriefLoss
@@ -153,129 +247,112 @@ public struct ReminderEngine: Sendable {
         }
         guard [input.rollDeviation, input.yawDeviation, input.pitchDeviation].allSatisfy(\.isFinite),
               input.shoulderDeviation.map(\.isFinite) ?? true else { return quiet("姿态数值无效") }
-        guard abs(input.yawDeviation) <= configuration.yawLimitDegrees, abs(input.pitchDeviation) <= configuration.pitchLimitDegrees else {
+        guard abs(input.yawDeviation) <= configuration.yawLimitDegrees,
+              abs(input.pitchDeviation) <= configuration.pitchLimitDegrees else {
             return quiet("观看方向偏离参考较大，保持安静")
         }
         history.append(input)
         history.removeAll { input.timestamp - $0.timestamp > 1.2 }
-        // Head status uses the same face-to-reference roll shown in the UI.
-        // A similar shoulder lean must not cancel visible head deviation into "normal".
-        let rawNormal = abs(input.rollDeviation) <= configuration.headExitDegrees
-            && (input.shoulderDeviation.map { abs($0) <= configuration.shoulderExitDegrees } ?? true)
-        // Show pending recovery immediately; two continuous seconds of real normal samples
-        // confirm it. Smoothing must not hide a brief return or count stale normal values.
-        if rawNormal, let active = candidate ?? episode,
-           active != .shoulders || input.shoulderDeviation != nil {
-            return normalResult(at: input.timestamp)
-        }
-        if !rawNormal { previousNormalTimestamp = nil; goodSeconds = 0 }
-        guard history.count >= 3, let first = history.first,
-              input.timestamp - first.timestamp + 0.000001 >= configuration.settleSeconds else {
-            return suspend("正在收集清晰姿态", at: input.timestamp)
-        }
-        let rolls = history.map(\.rollDeviation)
-        guard stable(rolls, tolerance: 3) else { return suspend("头部角度波动，等待稳定", at: input.timestamp) }
-        guard stable(history.map(\.yawDeviation), tolerance: 4), stable(history.map(\.pitchDeviation), tolerance: 4),
-              abs(input.yawDeviation - median(history.map(\.yawDeviation))) <= 12,
-              abs(input.pitchDeviation - median(history.map(\.pitchDeviation))) <= 12 else {
-            return suspend("正在转头或切换观看方向", at: input.timestamp)
-        }
-        let roll = median(rolls)
-        let shoulders = history.compactMap(\.shoulderDeviation)
-        // Shoulder jitter cannot block an otherwise clear head observation.
-        // A cached shoulder value only classifies head/torso motion; it never accrues shoulder time.
-        let lastShoulderAt = history.last(where: { $0.shoulderDeviation != nil })?.timestamp
-        let shoulder = shoulders.count >= 3 && stable(shoulders, tolerance: 3)
-            && (lastShoulderAt.map({ input.timestamp - $0 <= configuration.lossGraceSeconds }) ?? false)
-            ? median(shoulders) : nil
-        let head = shoulder.map { Geometry.wrapDegrees(roll - $0) } ?? roll
-        let shoulderAvailable = input.shoulderDeviation != nil && shoulder != nil
-        let isNormal = abs(roll) <= configuration.headExitDegrees
-            && (shoulder.map { abs($0) <= configuration.shoulderExitDegrees } ?? true)
-        let delta = previousEligibleTimestamp.map { min(configuration.maximumGap, input.timestamp - $0) } ?? 0
-
-        if isNormal {
-            // Missing shoulders cannot confirm recovery of a shoulder episode.
-            if (candidate ?? episode) == .shoulders && !shoulderAvailable {
-                return suspend("肩线暂不可用，头部可判定", at: input.timestamp)
-            }
-            if !rawNormal { return suspend("正在调整姿态，等待稳定", at: input.timestamp) }
-            return normalResult(at: input.timestamp)
-        }
-        previousNormalTimestamp = nil; goodSeconds = 0
-        let next: ReminderKind?
-        if let shoulder, abs(shoulder) >= configuration.shoulderEnterDegrees && abs(roll) <= configuration.headExitDegrees {
-            next = .shoulders
-        } else if abs(roll) >= configuration.headEnterDegrees {
-            // When head and torso lean together, use a general posture correction.
-            if let shoulder, abs(shoulder) > configuration.headExitDegrees && abs(head) <= configuration.headExitDegrees {
-                next = .shoulders
-            } else { next = roll > 0 ? .headTowardLeft : .headTowardRight }
-        } else if let shoulder, abs(shoulder) >= configuration.shoulderEnterDegrees {
-            next = .shoulders
-        } else if let active = candidate ?? episode {
-            switch active {
-            case .headTowardLeft: next = roll > configuration.headExitDegrees ? active : nil
-            case .headTowardRight: next = roll < -configuration.headExitDegrees ? active : nil
-            case .shoulders: next = shoulder.map { abs($0) > configuration.shoulderExitDegrees || abs(roll) > configuration.headExitDegrees ? active : nil } ?? nil
-            }
-        } else { next = nil }
-        guard let next else {
-            // Values in the entry/exit band are not proof of recovery.
-            previousEligibleTimestamp = nil; suspendedSince = nil
-            state = .slightDeviation
-            return ReminderResult(state: state, event: nil)
-        }
-        if next == .shoulders && !shoulderAvailable { return suspend("肩线暂不可用，头部可判定", at: input.timestamp) }
-        suspendedSince = nil
-        let changed = candidate != next
-        if changed { candidate = next; badSeconds = 0; previousEligibleTimestamp = nil }
-        else { badSeconds += delta }
-        previousEligibleTimestamp = input.timestamp
-        if badSeconds + 0.000001 < configuration.sustainedSeconds {
-            state = .candidate(next, seconds: Int(badSeconds))
-            return ReminderResult(state: state, event: changed && episode != nil ? .quiet : nil)
-        }
-        state = .deviating(next)
-        if lastReminderAt.map({ input.timestamp - $0 >= configuration.cooldownSeconds }) ?? true {
-            lastReminderAt = input.timestamp; episode = next
-            return ReminderResult(state: state, event: .correction(next))
-        }
-        return ReminderResult(state: state, event: nil)
+        let collected = history.count >= 3 && history.first.map {
+            input.timestamp - $0.timestamp + 0.000001 >= configuration.settleSeconds
+        } == true
+        let directionStable = collected && stable(history.map(\.yawDeviation), tolerance: 4)
+            && stable(history.map(\.pitchDeviation), tolerance: 4)
+            && abs(input.yawDeviation - median(history.map(\.yawDeviation))) <= 12
+            && abs(input.pitchDeviation - median(history.map(\.pitchDeviation))) <= 12
+        let hadReminded = head.episode != nil || shoulders.episode != nil
+        var events: [ReminderEvent] = []
+        // The visible face roll is compared to the face reference independently
+        // of the shoulder line. An equal torso lean cannot cancel a head deviation.
+        if let event = classify(&head, raw: input.rollDeviation,
+            values: history.map(\.rollDeviation), collected: collected, directionStable: directionStable,
+            enter: configuration.headEnterDegrees, exit: configuration.headExitDegrees,
+            timestamp: input.timestamp, unavailable: "头部暂不可用",
+            unstable: "头部角度波动，等待稳定", configuration: configuration) { events.append(event) }
+        let shoulderSamples = history.filter { $0.shoulderDeviation != nil }
+        let shoulderCollected = collected && shoulderSamples.count >= 3 && shoulderSamples.first.map {
+            input.timestamp - $0.timestamp + 0.000001 >= configuration.settleSeconds
+        } == true
+        if let event = classify(&shoulders, raw: input.shoulderDeviation,
+            values: shoulderSamples.compactMap(\.shoulderDeviation), collected: shoulderCollected,
+            directionStable: directionStable, enter: configuration.shoulderEnterDegrees,
+            exit: configuration.shoulderExitDegrees, timestamp: input.timestamp,
+            unavailable: "肩线暂不可用，头部可判定", unstable: "肩线角度波动，等待稳定",
+            configuration: configuration) { events.append(event) }
+        // Recovery means the last reminded channel has actually recovered; one
+        // corrected shoulder must never dismiss a still unresolved head reminder.
+        if hadReminded && head.episode == nil && shoulders.episode == nil { events.append(.recovered) }
+        state = aggregateState()
+        if events.isEmpty && !head.observable && !shoulders.observable { events.append(.quiet) }
+        return result(events: events)
     }
 
-    private mutating func clearEvidence() {
-        history = []; previousEligibleTimestamp = nil; candidate = nil; badSeconds = 0; goodSeconds = 0
-        previousNormalTimestamp = nil; suspendedSince = nil
+    private func classify(_ channel: inout ChannelEvidence, raw: Double?, values: [Double],
+                          collected: Bool, directionStable: Bool, enter: Double, exit: Double,
+                          timestamp: Double, unavailable: String, unstable: String,
+                          configuration: ReminderConfiguration) -> ReminderEvent? {
+        guard let raw else { channel.suspend(unavailable, at: timestamp, configuration: configuration); return nil }
+        guard collected else {
+            channel.suspend("正在收集清晰姿态", at: timestamp, configuration: configuration); return nil
+        }
+        guard directionStable else {
+            channel.suspend("正在转头或切换观看方向", at: timestamp, configuration: configuration); return nil
+        }
+        // Recovery uses current samples, avoiding a stale smoothed normal value.
+        // A brief real return pauses the bad timer without clearing its evidence.
+        if abs(raw) <= exit && channel.activeKind != nil {
+            channel.normal(at: timestamp, configuration: configuration); return nil
+        }
+        guard stable(values, tolerance: 3) else {
+            channel.suspend(unstable, at: timestamp, configuration: configuration); return nil
+        }
+        let value = median(values)
+        if abs(value) <= exit {
+            if abs(raw) <= exit { channel.normal(at: timestamp, configuration: configuration) }
+            else { channel.suspend("正在调整姿态，等待稳定", at: timestamp, configuration: configuration) }
+            return nil
+        }
+        if abs(value) >= enter || channel.activeKind != nil {
+            let kind: ReminderKind = channel.channel == .shoulders ? .shoulders
+                : (value > 0 ? .headTowardLeft : .headTowardRight)
+            return channel.abnormal(kind: kind, at: timestamp, configuration: configuration)
+        }
+        channel.observable = true; channel.suspendedSince = nil; channel.breakContinuity()
+        channel.state = .slightDeviation
+        return nil
     }
-    private mutating func normalResult(at timestamp: Double) -> ReminderResult {
-        goodSeconds += previousNormalTimestamp.map { min(configuration.maximumGap, timestamp - $0) } ?? 0
-        previousNormalTimestamp = timestamp; previousEligibleTimestamp = nil; suspendedSince = nil
-        if let active = candidate ?? episode, goodSeconds + 0.000001 < configuration.recoverySeconds {
-            state = .recovering(active, accumulatedSeconds: Int(badSeconds))
-            return ReminderResult(state: state, event: nil)
+
+    private func aggregateState() -> MonitorState {
+        let evidence = [head, shoulders]
+        for item in evidence where item.observable {
+            if case .deviating = item.state { return item.state }
         }
-        let hadEpisode = episode != nil
-        candidate = nil; badSeconds = 0; state = .normal
-        if hadEpisode && goodSeconds + 0.000001 >= configuration.recoverySeconds {
-            episode = nil
-            return ReminderResult(state: state, event: .recovered)
+        for item in evidence where item.observable {
+            if case .recovering = item.state { return item.state }
         }
-        return ReminderResult(state: state, event: nil)
+        for item in evidence where item.observable {
+            if case .candidate = item.state { return item.state }
+        }
+        // An unobservable unresolved channel cannot be reported as recovered.
+        if let item = evidence.first(where: { !$0.observable && $0.activeKind != nil }) { return item.state }
+        if evidence.contains(where: { $0.observable && $0.state == .slightDeviation }) { return .slightDeviation }
+        if head.observable { return .normal }
+        return head.state
+    }
+    private func result(events: [ReminderEvent]) -> ReminderResult {
+        ReminderResult(state: state, event: events.first,
+            channels: [head.snapshot, shoulders.snapshot], events: events)
     }
     private mutating func quiet(_ reason: String) -> ReminderResult {
-        clearEvidence()
-        state = .unknown(reason)
-        return ReminderResult(state: state, event: .quiet)
+        history = []; head.clearEvidence(); shoulders.clearEvidence()
+        head.state = .unknown(reason); shoulders.state = .unknown(reason); state = .unknown(reason)
+        return result(events: [.quiet])
     }
     private mutating func suspend(_ reason: String, at timestamp: Double) -> ReminderResult {
-        if suspendedSince == nil { suspendedSince = timestamp }
-        previousEligibleTimestamp = nil; previousNormalTimestamp = nil; goodSeconds = 0
-        if timestamp - (suspendedSince ?? timestamp) + 0.000001 >= configuration.lossGraceSeconds {
-            candidate = nil; badSeconds = 0
-            state = .unknown(reason)
-        } else { state = .waiting(reason, accumulatedSeconds: Int(badSeconds)) }
-        return ReminderResult(state: state, event: .quiet)
+        head.suspend(reason, at: timestamp, configuration: configuration)
+        shoulders.suspend(reason, at: timestamp, configuration: configuration)
+        state = aggregateState()
+        return result(events: [.quiet])
     }
     private func median(_ values: [Double]) -> Double {
         let sorted = values.sorted(), middle = sorted.count / 2

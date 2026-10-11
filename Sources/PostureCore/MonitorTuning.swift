@@ -28,8 +28,10 @@ public struct MonitorTuning: Codable, Equatable, Sendable {
     public var facialShiftThreshold = 0.08
     public var eyelidChangeThreshold = 0.15
     public var jawCheckSeconds = 300.0
+    public var oralMatchDistance = 0.85
+    public var oralMatchMargin = 0.35
     public init() {}
-    private enum CodingKeys: String, CodingKey { case computePreference, sustainedSeconds, cooldownSeconds, headEnterDegrees, headExitDegrees, shoulderEnterDegrees, shoulderExitDegrees, recoverySeconds, lossGraceSeconds, settleSeconds, yawLimitDegrees, pitchLimitDegrees, faceHertz, bodyHertz, handMouthSeconds, handMouthRadius, lipChangeSeconds, lipChangeThreshold, facialShiftThreshold, eyelidChangeThreshold, jawCheckSeconds }
+    private enum CodingKeys: String, CodingKey { case computePreference, sustainedSeconds, cooldownSeconds, headEnterDegrees, headExitDegrees, shoulderEnterDegrees, shoulderExitDegrees, recoverySeconds, lossGraceSeconds, settleSeconds, yawLimitDegrees, pitchLimitDegrees, faceHertz, bodyHertz, handMouthSeconds, handMouthRadius, lipChangeSeconds, lipChangeThreshold, facialShiftThreshold, eyelidChangeThreshold, jawCheckSeconds, oralMatchDistance, oralMatchMargin }
     public init(from decoder: Decoder) throws {
         self.init()
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -54,6 +56,8 @@ public struct MonitorTuning: Codable, Equatable, Sendable {
         facialShiftThreshold = try c.decodeIfPresent(Double.self, forKey: .facialShiftThreshold) ?? facialShiftThreshold
         eyelidChangeThreshold = try c.decodeIfPresent(Double.self, forKey: .eyelidChangeThreshold) ?? eyelidChangeThreshold
         jawCheckSeconds = try c.decodeIfPresent(Double.self, forKey: .jawCheckSeconds) ?? jawCheckSeconds
+        oralMatchDistance = try c.decodeIfPresent(Double.self, forKey: .oralMatchDistance) ?? oralMatchDistance
+        oralMatchMargin = try c.decodeIfPresent(Double.self, forKey: .oralMatchMargin) ?? oralMatchMargin
     }
     public var normalized: Self {
         var t = self
@@ -80,6 +84,8 @@ public struct MonitorTuning: Codable, Equatable, Sendable {
         t.facialShiftThreshold = bound(t.facialShiftThreshold, 0.02...0.3, 0.08)
         t.eyelidChangeThreshold = bound(t.eyelidChangeThreshold, 0.05...0.5, 0.15)
         t.jawCheckSeconds = bound(t.jawCheckSeconds, 30...3600, 300)
+        t.oralMatchDistance = bound(t.oralMatchDistance, 0.2...2, 0.85)
+        t.oralMatchMargin = bound(t.oralMatchMargin, 0.1...2, 0.35)
         return t
     }
     public var reminderConfiguration: ReminderConfiguration {

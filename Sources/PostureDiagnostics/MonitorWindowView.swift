@@ -44,11 +44,11 @@ struct MonitorWindowView: View {
                 Button(model.hasStarted ? "暂停监测" : "开始监测") { model.hasStarted ? model.pause() : model.start() }
                     .buttonStyle(.borderedProminent)
             }
-            if case .recovering(_, let seconds) = model.monitorState {
-                Text("待确认恢复 · 已累计偏离 \(seconds) 秒；连续回正 \(model.settings.tuning.normalized.recoverySeconds, specifier: "%.1f") 秒后才清零。")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else if let detail = model.monitorDetail {
+            if let detail = model.monitorDetail {
                 Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            if !model.habitTimingSummary.isEmpty {
+                Text(model.habitTimingSummary).font(.caption).foregroundStyle(.secondary).lineLimit(2).help(model.habitTimingSummary)
             }
         }.padding(18).frame(minWidth: 720, minHeight: 520)
             .background(Color(nsColor: .windowBackgroundColor))
@@ -82,7 +82,7 @@ struct SettingsWindowView: View {
                     numeric("头部恢复范围", $model.settings.tuning.headExitDegrees, 0.2...max(0.2, model.settings.tuning.headEnterDegrees - 0.2), 0.1, "°")
                     numeric("连续回正确认", $model.settings.tuning.recoverySeconds, 0.5...10, 0.5, "秒")
                     numeric("再次提醒间隔", $model.settings.tuning.cooldownSeconds, 5...1800, 5, "秒")
-                    Text("参数立即生效并保存。短暂回正保留计时，默认静音，提示约 4 秒淡出。").font(.caption).foregroundStyle(.secondary)
+                    Text("各项异常独立计时。短暂回正保留计时，默认静音；持续异常的提示保留到确认恢复，看不清时隐藏。").font(.caption).foregroundStyle(.secondary)
                     Text(model.rollDeviation.map { String(format: "当前头部偏移 %+.1f°", $0) } ?? "开始监测并校准后可查看实时偏移")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -103,6 +103,19 @@ struct SettingsWindowView: View {
                 if let notice = model.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
             }.formStyle(.grouped).tabItem { Label("提醒", systemImage: "bell") }
             Form {
+                Section("嘴角与口部变化") {
+                    Toggle("监测持续歪嘴", isOn: $model.settings.mouthShiftMonitoring)
+                    numeric("变化持续时间", $model.settings.tuning.lipChangeSeconds, 1...30, 1, "秒")
+                    numeric("嘴角变化阈值（比例）", $model.settings.tuning.facialShiftThreshold, 0.02...0.3, 0.01, "")
+                    Text("嘴角相对自然参考的偏移独立累计，张嘴时也观察。").font(.caption).foregroundStyle(.secondary)
+                }
+                OralSampleSettingsView(model: model, store: model.oralSamples)
+                DisclosureGroup("示范匹配敏感度") {
+                    numeric("允许的外观差距", $model.settings.tuning.oralMatchDistance, 0.2...2, 0.05, "")
+                    numeric("分类区分裕度", $model.settings.tuning.oralMatchMargin, 0.1...2, 0.05, "")
+                    Text("允许差距调大或区分裕度调小，会更容易提示，也可能增加误报。这里的数值是几何距离，不是识别准确率。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("手与嘴唇") {
                     Toggle("手靠近嘴唇时提醒", isOn: $model.settings.handMouthMonitoring)
                     numeric("持续接近后提醒", $model.settings.tuning.handMouthSeconds, 0.5...15, 0.5, "秒")
@@ -117,25 +130,28 @@ struct SettingsWindowView: View {
                 DisclosureGroup("口唇与眼周变化（试验）") {
                     Toggle("持续口唇收紧变化时提示", isOn: $model.settings.experimentalLipMonitoring)
                     Toggle("持续嘴角或单侧眯眼变化时提示", isOn: $model.settings.experimentalFaceMonitoring)
-                    numeric("变化持续时间", $model.settings.tuning.lipChangeSeconds, 1...30, 1, "秒")
                     numeric("口唇变化阈值（比例）", $model.settings.tuning.lipChangeThreshold, 0.02...0.3, 0.01, "")
-                    numeric("嘴角变化阈值（比例）", $model.settings.tuning.facialShiftThreshold, 0.02...0.3, 0.01, "")
                     numeric("眼周变化阈值（比例）", $model.settings.tuning.eyelidChangeThreshold, 0.05...0.5, 0.01, "")
                     Text(model.facialReferenceAvailable ? "已建立个人口唇参考" : "需要重新校准，采集自然放松、不讲话时的口唇参考")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text("仅比较与个人参考的外观变化，不判断左右脸病因，也不能区分咬唇、犬牙摩擦或上下牙接触。").font(.caption).foregroundStyle(.secondary)
+                    Text("比较与个人参考的外观变化；具体动作可通过上方个人示范匹配。画面不用于确认牙位接触或咬合力量。").font(.caption).foregroundStyle(.secondary)
                 }
                 Section("实时观察") {
                     Text(model.habitSummary).font(.callout)
+                    if !model.habitTimingSummary.isEmpty { Text(model.habitTimingSummary).font(.caption).monospacedDigit() }
                     Text(model.facialMetricsSummary).font(.caption).foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped).tabItem { Label("口部习惯", systemImage: "hand.raised") }
             Form {
+                Section("视频预览") {
+                    Toggle("镜像视频预览", isOn: $model.mirrored)
+                    Text("同时应用于监控窗口和画中画的视频与骨架。默认关闭；只改变预览方向，不改变姿态判断。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("画中画") {
                     Toggle("保持置顶", isOn: $model.settings.pipOnTop)
                     Toggle("显示摄像头", isOn: $model.settings.pipShowsVideo)
                     Toggle("显示骨架", isOn: $model.settings.pipShowsSkeleton)
-                    Toggle("镜像预览", isOn: $model.mirrored)
                     Picker("大小", selection: $model.settings.pipSize) { ForEach(PiPSize.allCases) { Text($0.label).tag($0) } }
                     Picker("显示器", selection: $model.settings.pipScreenID) {
                         Text("当前工作显示器").tag("automatic")
@@ -144,11 +160,11 @@ struct SettingsWindowView: View {
                     Picker("位置", selection: $model.settings.pipCorner) { ForEach(PiPCorner.allCases) { Text($0.label).tag($0) } }
                 }
                 Toggle("启动时继续上次监测", isOn: $model.settings.resumeOnLaunch)
-            }.formStyle(.grouped).tabItem { Label("画中画", systemImage: "pip") }
+            }.formStyle(.grouped).tabItem { Label("视频预览", systemImage: "video") }
             Form {
                 Section("个人校准") {
                     Picker("观看情境", selection: $model.selectedContext) { ForEach(ViewingContext.allCases) { Text($0.label).tag($0) } }
-                        .disabled(model.calibrationProgress != nil)
+                        .disabled(model.calibrationProgress != nil || model.oralSamples.isRecording)
                     if let progress = model.calibrationProgress {
                         ProgressView(value: progress)
                         Button("取消校准") { model.cancelCalibration() }

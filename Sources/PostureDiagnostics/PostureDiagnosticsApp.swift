@@ -7,7 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var model: DiagnosticModel?
     private var desktop: DesktopCoordinator?
     private var smokeLog: [[String: Any]] = []
+    private let appearance = AppAppearance()
     func applicationDidFinishLaunching(_ notification: Notification) {
+        appearance.start()
         let args = CommandLine.arguments
         let demo = args.contains("--demo") || args.contains("--ui-smoke")
         let model = DiagnosticModel(demo: demo)
@@ -49,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         desktop?.showMain(expandPreview: false); return true
     }
-    func applicationWillTerminate(_ notification: Notification) { desktop?.shutdown(); model?.shutdown() }
+    func applicationWillTerminate(_ notification: Notification) { appearance.stop(); desktop?.shutdown(); model?.shutdown() }
 
     private func runSmoke(model: DiagnosticModel, desktop: DesktopCoordinator) {
         desktop.showPiP()
@@ -62,8 +64,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         schedule(20) { self.record("head-only", model: model, desktop: desktop); desktop.hidePiP(); desktop.hideMain() }
         schedule(21) { desktop.showMain(expandPreview: true); model.demoScenario = .handNearMouth }
         schedule(25) { self.record("hand-mouth", model: model, desktop: desktop); model.demoScenario = .clear; desktop.hidePiP(); desktop.hideMain() }
-        schedule(26) {
-            self.record("hidden", model: model, desktop: desktop)
+        schedule(26) { self.record("hidden", model: model, desktop: desktop) }
+        schedule(27) { desktop.showMain(expandPreview: true); model.demoScenario = .headAndShoulderTilt }
+        schedule(36) { self.record("persistent-overlap", model: model, desktop: desktop) }
+        schedule(37) { model.demoScenario = .shoulderShift }
+        schedule(39) { self.record("partial-recovery", model: model, desktop: desktop) }
+        schedule(40) { model.demoScenario = .headAndShoulderTilt }
+        schedule(45) { self.record("overlap-again", model: model, desktop: desktop) }
+        schedule(46) { model.demoScenario = .clear }
+        schedule(48) { self.record("all-recovered", model: model, desktop: desktop) }
+        schedule(51) { self.record("recovered-hidden", model: model, desktop: desktop) }
+        schedule(53) {
+            self.record("complete", model: model, desktop: desktop)
             let report: [String: Any] = ["input": "synthetic accelerated demo; no camera or personal calibration changes",
                 "snapshots": self.smokeLog, "focusPreserved": desktop.reminders.focusPreserved]
             self.writeReport(report, flag: "--smoke-report=")
@@ -73,7 +85,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func record(_ phase: String, model: DiagnosticModel, desktop: DesktopCoordinator) {
         smokeLog.append(["phase": phase, "banner": desktop.reminders.snapshot,
                          "presentation": desktop.presentationSnapshot, "reminderCount": model.reminderCount,
-                         "monitorState": model.monitorSummary, "monitorDetail": model.monitorDetail ?? ""])
+                         "monitorState": model.monitorSummary, "monitorDetail": model.monitorDetail ?? "",
+                         "postureChannels": model.postureChannels.map { ["channel": $0.channel.rawValue,
+                            "seconds": $0.accumulatedSeconds, "unresolved": $0.isUnresolved, "reminded": $0.hasReminded] }])
     }
     private func writeReport(_ report: [String: Any], flag: String) {
         guard let argument = CommandLine.arguments.first(where: { $0.hasPrefix(flag) }),
@@ -91,6 +105,10 @@ enum PostureDiagnosticsApp {
         if CommandLine.arguments.contains("--bridge-check") { BridgeChecks.run() }
         if CommandLine.arguments.contains("--settings-check") { DiagnosticsChecks.settings() }
         if CommandLine.arguments.contains("--pipeline-check") { DiagnosticsChecks.pipeline() }
+        if CommandLine.arguments.contains("--oral-store-check") { DiagnosticsChecks.oralStore() }
+        if let index = CommandLine.arguments.firstIndex(of: "--image-check") {
+            ImageSampleChecks.run(paths: Array(CommandLine.arguments.dropFirst(index + 1)))
+        }
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         let delegate = AppDelegate()

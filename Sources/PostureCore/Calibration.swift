@@ -73,6 +73,7 @@ public struct CalibrationCollector: Sendable {
     private var rolls: [Double] = [], yaws: [Double] = [], pitches: [Double] = [], shoulders: [Double] = []
     private var lipAspects: [Double] = [], mouthShifts: [Double] = [], cornerSlopes: [Double] = []
     private var eyelidDifferences: [Double] = []
+    private var oralFeatures: [FacialFeatures] = []
 
     public init(context: ViewingContext, startedAt: Double, signature: String, duration: Double = 20) {
         self.context = context; self.startedAt = startedAt; self.signature = signature; self.duration = duration
@@ -100,6 +101,7 @@ public struct CalibrationCollector: Sendable {
         if metrics.faceUsable, abs(metrics.yaw ?? 90) <= 15, abs(metrics.pitch ?? 90) <= 30,
            let f = observation.oral?.features, f.mouthOpening < 0.08 {
             lipAspects.append(f.outerLipAspect); mouthShifts.append(f.mouthShift); cornerSlopes.append(f.cornerSlope)
+            oralFeatures.append(f)
             if let difference = f.eyelidDifference, difference.isFinite { eyelidDifferences.append(difference) }
         }
     }
@@ -129,6 +131,18 @@ public struct CalibrationCollector: Sendable {
            let shift = BaselineMetric.from(mouthShifts), shift.mad <= 0.03,
            let slope = BaselineMetric.from(cornerSlopes), slope.mad <= 0.03 {
             result.facialReference = FacialReference(outerLipAspect: lips.median, mouthShift: shift.median, cornerSlope: slope.median)
+            func stableFeature(_ value: (FacialFeatures) -> Double?) -> Double? {
+                let values = oralFeatures.compactMap(value).filter(\.isFinite)
+                guard values.count >= 20, let metric = BaselineMetric.from(values), metric.mad <= 0.03 else { return nil }
+                return metric.median
+            }
+            result.facialReference?.upperLipThickness = stableFeature { $0.upperLipThickness }
+            result.facialReference?.mouthWidth = stableFeature { $0.mouthWidth }
+            result.facialReference?.mouthOpening = stableFeature { $0.mouthOpening }
+            result.facialReference?.lowerLipThickness = stableFeature { $0.lowerLipThickness }
+            result.facialReference?.upperLipAsymmetry = stableFeature { $0.upperLipAsymmetry }
+            result.facialReference?.lowerLipAsymmetry = stableFeature { $0.lowerLipAsymmetry }
+            result.facialReference?.innerMouthAsymmetry = stableFeature { $0.innerMouthAsymmetry }
             if eyelidDifferences.count >= 20, let eye = BaselineMetric.from(eyelidDifferences), eye.mad <= 0.05 {
                 result.facialReference?.eyelidDifference = eye.median
             }

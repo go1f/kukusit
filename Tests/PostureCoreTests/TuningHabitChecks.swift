@@ -51,6 +51,10 @@ final class TuningHabitChecks {
         expectEqual(rotated.outerLipAspect,f.outerLipAspect,accuracy:0.00001)
         expectEqual(rotated.mouthShift,f.mouthShift,accuracy:0.00001)
         expectEqual(rotated.cornerSlope,f.cornerSlope,accuracy:0.00001)
+        expectEqual(rotated.mouthWidth!, f.mouthWidth!, accuracy:0.00001)
+        expectEqual(rotated.upperLipThickness!, f.upperLipThickness!, accuracy:0.00001)
+        expectEqual(rotated.lowerLipThickness!, f.lowerLipThickness!, accuracy:0.00001)
+        expectEqual(rotated.innerMouthAsymmetry!, f.innerMouthAsymmetry!, accuracy:0.00001)
     }
     private func observation(_ time: Double, hand: Bool = false, confidence: Double = 0.95,
                              features: FacialFeatures = FacialFeatures(outerLipAspect:0.2,mouthOpening:0.02,mouthShift:0,cornerSlope:0),
@@ -126,4 +130,145 @@ final class TuningHabitChecks {
         let input=ReminderInput.make(observation:changed,metrics:QualityGate.evaluate(changed),baseline:baseline)
         expectTrue(input.reliable); expectNil(input.shoulderDeviation)
     }
+    func testOpenMouthShiftAndParallelHabitTimers() {
+        var e = HabitEngine(), t = MonitorTuning()
+        t.handMouthSeconds = 1; t.lipChangeSeconds = 1
+        let reference = FacialReference(outerLipAspect: 0.3, mouthShift: 0, cornerSlope: 0, mouthWidth: 1.0)
+        let together = FacialFeatures(outerLipAspect: 0.1, mouthOpening: 0.02, mouthShift: 0.2, cornerSlope: 0.15)
+        var result = e.result
+        for i in 0...12 {
+            let o = observation(Double(i)/6, hand: true, features: together)
+            result = e.observeDetailed(o, metrics: QualityGate.evaluate(o), reference: reference, tuning: t, hand: true, lips: true, face: false, mouthShift: true)
+        }
+        expectEqual(Set(result.confirmedStates.map(\.kind)), Set([.handMouth, .lipChange, .facialShift]))
+        let openShift = FacialFeatures(outerLipAspect: 0.5, mouthOpening: 0.2, mouthShift: 0, cornerSlope: 0, mouthWidth: 0.8)
+        for i in 13...30 {
+            let o = observation(Double(i)/6, features: openShift)
+            result = e.observeDetailed(o, metrics: QualityGate.evaluate(o), reference: reference, tuning: t, hand: true, lips: true, face: false, mouthShift: true)
+        }
+        expectEqual(result.confirmedStates.map(\.kind), [.facialShift])
+        expectTrue(result.confirmedStates[0].elapsedSeconds >= 4.0)
+    }
+    func testHabitShortRecoveryRetainsCountAndConfirmation() {
+        var e = HabitEngine(), t = MonitorTuning(); t.lipChangeSeconds = 2
+        let reference = FacialReference(outerLipAspect: 0.3, mouthShift: 0, cornerSlope: 0)
+        let shifted = FacialFeatures(outerLipAspect: 0.3, mouthOpening: 0.2, mouthShift: 0.2, cornerSlope: 0)
+        var before = 0.0, result = e.result
+        for i in 0...30 {
+            let active = i < 12 || i >= 18
+            let o = observation(Double(i)/6, features: active ? shifted : FacialFeatures(outerLipAspect: 0.3, mouthOpening: 0.02, mouthShift: 0, cornerSlope: 0))
+            result = e.observeDetailed(o, metrics: QualityGate.evaluate(o), reference: reference, tuning: t, hand: false, lips: false, face: true)
+            if i == 11 { before = result.states[0].elapsedSeconds }
+            if i == 17 { expectEqual(result.states[0].elapsedSeconds, before); expectTrue(result.states[0].recovering) }
+        }
+        expectEqual(result.confirmedStates.map(\.kind), [.facialShift])
+        for i in 31...36 {
+            let o = observation(Double(i)/6)
+            result = e.observeDetailed(o, metrics: QualityGate.evaluate(o), reference: reference, tuning: t, hand: false, lips: false, face: true)
+        }
+        expectEqual(result.confirmedStates.map(\.kind), [.facialShift])
+        expectTrue(result.confirmedStates[0].recovering)
+        for i in 37...45 {
+            let o = observation(Double(i)/6)
+            result = e.observeDetailed(o, metrics: QualityGate.evaluate(o), reference: reference, tuning: t, hand: false, lips: false, face: true)
+        }
+        expectTrue(result.confirmedStates.isEmpty)
+    }
+    func testHabitDropoutFreezesAndNeverConfirmsRecovery() {
+        var e = HabitEngine(), t = MonitorTuning(); t.handMouthSeconds = 1
+        var result = e.result
+        for i in 0...8 {
+            let o = observation(Double(i)/6, hand: true)
+            result = e.observeDetailed(o, metrics: QualityGate.evaluate(o), reference: nil, tuning: t, hand: true, lips: false, face: false)
+        }
+        let count = result.confirmedStates[0].elapsedSeconds
+        var lost = observation(1.5, hand: true); lost.oral = nil
+        result = e.observeDetailed(lost, metrics: QualityGate.evaluate(lost), reference: nil, tuning: t, hand: true, lips: false, face: false)
+        expectFalse(result.reliable); expectTrue(result.confirmedStates.isEmpty)
+        expectEqual(result.states.map(\.kind), [.handMouth])
+        expectEqual(result.states[0].elapsedSeconds, count)
+        let back = observation(1.7, hand: true)
+        result = e.observeDetailed(back, metrics: QualityGate.evaluate(back), reference: nil, tuning: t, hand: true, lips: false, face: false)
+        expectEqual(result.confirmedStates[0].elapsedSeconds, count)
+    }
+    func testLegacyFacialFeaturesDecodeAndNewGeometryRoundTrip() throws {
+        let old = Data(#"{"outerLipAspect":0.2,"mouthOpening":0.02,"mouthShift":0,"cornerSlope":0}"#.utf8)
+        let f = try JSONDecoder().decode(FacialFeatures.self, from: old)
+        expectNil(f.upperLipThickness); expectTrue(f.isFinite)
+        let legacyReference = try JSONDecoder().decode(FacialReference.self, from: Data(#"{"outerLipAspect":0.2,"mouthShift":0,"cornerSlope":0}"#.utf8))
+        expectNil(legacyReference.upperLipAsymmetry)
+        let derived = FacialGeometry.features(outer: mouth, inner: inner, leftEye: left, rightEye: right, nose: [Point(0.5,0.55)], image: ImageSize(1280,720))!
+        expectNotNil(derived.upperLipThickness); expectNotNil(derived.innerMouthAsymmetry)
+        expectEqual(try JSONDecoder().decode(FacialFeatures.self, from: JSONEncoder().encode(derived)), derived)
+    }
+    func testPersonalPrototypeRequiresNeutralDistanceAndMargin() throws {
+        let relaxed = FacialFeatures(outerLipAspect: 0.2, mouthOpening: 0.02, mouthShift: 0, cornerSlope: 0)
+        let strained = FacialFeatures(outerLipAspect: 0.4, mouthOpening: 0.2, mouthShift: 0.1, cornerSlope: 0.05)
+        let example = OralPoseExample(action: .upperLip, label: "我的上唇动作", samples: Array(repeating: strained, count: 6))
+        var library = OralPoseExamples(cameraSignature: "personal", examples: [example])
+        expectNil(library.match(strained))
+        library.neutral = Array(repeating: relaxed, count: 6)
+        expectEqual(library.reference?.outerLipAspect, relaxed.outerLipAspect)
+        expectEqual(library.match(strained)?.action, .upperLip)
+        expectNil(library.match(relaxed))
+        let unmatched = FacialFeatures(outerLipAspect: 0.9, mouthOpening: 0.01, mouthShift: -0.2, cornerSlope: -0.3)
+        expectNil(library.match(unmatched))
+        let duplicate = OralPoseExample(action: .tongueSide, label: "无法区分的示范", samples: Array(repeating: strained, count: 6))
+        library.examples.append(duplicate)
+        expectNil(library.match(strained))
+        library.examples = [OralPoseExample(action: .upperLip, label: "与放松相同", samples: Array(repeating: relaxed, count: 6))]
+        expectNil(library.match(relaxed))
+        expectEqual(try JSONDecoder().decode(OralPoseExamples.self, from: JSONEncoder().encode(library)), library)
+    }
+    func testPersonalPrototypeRunsWithoutGenericLipExperiment() {
+        let relaxed = FacialFeatures(outerLipAspect: 0.2, mouthOpening: 0.02, mouthShift: 0, cornerSlope: 0)
+        let upperLip = FacialFeatures(outerLipAspect: 0.4, mouthOpening: 0.2, mouthShift: 0.1, cornerSlope: 0.05)
+        let library = OralPoseExamples(cameraSignature: "personal", neutral: Array(repeating: relaxed, count: 6),
+            examples: [OralPoseExample(action: .upperLip, label: "上唇示范", samples: Array(repeating: upperLip, count: 6))])
+        var e = HabitEngine(), t = MonitorTuning(); t.lipChangeSeconds = 1
+        var result = e.result
+        for i in 0...12 {
+            let o = observation(Double(i)/6, features: upperLip)
+            result = e.observeDetailed(o, metrics: QualityGate.evaluate(o), reference: nil, tuning: t,
+                hand: false, lips: false, face: false, examples: library)
+        }
+        expectEqual(result.confirmedStates.map(\.kind), [.upperLipAppearance])
+        expectEqual(result.matchedExample?.label, "上唇示范")
+    }
+
+    func testTwoHertzMouthAndExamplesReachThreshold() {
+        let relaxed = FacialFeatures(outerLipAspect: 0.2, mouthOpening: 0.02, mouthShift: 0, cornerSlope: 0)
+        let upperLip = FacialFeatures(outerLipAspect: 0.4, mouthOpening: 0.2, mouthShift: 0.1, cornerSlope: 0.05)
+        let library = OralPoseExamples(cameraSignature: "personal", neutral: Array(repeating: relaxed, count: 6),
+            examples: [OralPoseExample(action: .upperLip, label: "上唇示范", samples: Array(repeating: upperLip, count: 6))])
+        var e = HabitEngine(), t = MonitorTuning(); t.faceHertz = 2; t.lipChangeSeconds = 1
+        var result = e.result
+        for i in 0...6 {
+            let o = observation(Double(i)/2, features: upperLip)
+            result = e.observeDetailed(o, metrics: QualityGate.evaluate(o), reference: library.reference, tuning: t,
+                hand: false, lips: false, face: false, examples: library, mouthShift: true)
+        }
+        expectEqual(Set(result.confirmedStates.map(\.kind)), Set([.facialShift, .upperLipAppearance]))
+        let frozenCounts = Dictionary(uniqueKeysWithValues: result.states.map { ($0.kind, $0.elapsedSeconds) })
+        var missing = observation(3.5, features: upperLip); missing.oral = nil
+        result = e.observeDetailed(missing, metrics: QualityGate.evaluate(missing), reference: library.reference, tuning: t,
+            hand: false, lips: false, face: false, examples: library, mouthShift: true)
+        expectFalse(result.reliable); expectTrue(result.confirmedStates.isEmpty)
+        expectEqual(Dictionary(uniqueKeysWithValues: result.states.map { ($0.kind, $0.elapsedSeconds) }), frozenCounts)
+        let restored = observation(4, features: upperLip)
+        result = e.observeDetailed(restored, metrics: QualityGate.evaluate(restored), reference: library.reference, tuning: t,
+            hand: false, lips: false, face: false, examples: library, mouthShift: true)
+        expectEqual(Dictionary(uniqueKeysWithValues: result.states.map { ($0.kind, $0.elapsedSeconds) }), frozenCounts)
+        // A gap longer than a sampling interval is unknown, not another counted second.
+        let stalled = observation(5, features: upperLip)
+        result = e.observeDetailed(stalled, metrics: QualityGate.evaluate(stalled), reference: library.reference, tuning: t,
+            hand: false, lips: false, face: false, examples: library, mouthShift: true)
+        expectFalse(result.reliable)
+        expectEqual(Dictionary(uniqueKeysWithValues: result.states.map { ($0.kind, $0.elapsedSeconds) }), frozenCounts)
+        let resumed = observation(5.5, features: upperLip)
+        result = e.observeDetailed(resumed, metrics: QualityGate.evaluate(resumed), reference: library.reference, tuning: t,
+            hand: false, lips: false, face: false, examples: library, mouthShift: true)
+        expectEqual(Dictionary(uniqueKeysWithValues: result.states.map { ($0.kind, $0.elapsedSeconds) }), frozenCounts)
+    }
+
 }
