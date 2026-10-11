@@ -4,7 +4,7 @@
 
 ## 安装
 
-从 [GitHub Release v0.6.0](https://github.com/go1f/kukusit/releases/tag/v0.6.0) 下载 `Kukusit-0.6.0-macOS-arm64.dmg`，打开 DMG 后把 `Kukusit.app` 拖到 Applications。也提供 ZIP。安装后可从“应用程序”、Spotlight 或 Dock 启动，菜单栏入口继续保留。
+从 [GitHub Release v0.6.0](https://github.com/go1f/kukusit/releases/tag/v0.6.1) 下载 `Kukusit-0.6.0-macOS-arm64.dmg`，打开 DMG 后把 `Kukusit.app` 拖到 Applications。也提供 ZIP。安装后可从“应用程序”、Spotlight 或 Dock 启动，菜单栏入口继续保留。
 
 发行包包含原生界面、本地 MediaPipe 推理运行时和模型，**无需安装 Python、无需克隆项目，也不需要联网推理**。目标为 Apple Silicon Mac，包括 M5 / macOS 27；当前已在 M2 / macOS 27 验证，尚未在 M5 实机测试。
 
@@ -77,3 +77,7 @@ release/Kukusit.app/Contents/MacOS/PostureDiagnostics --bridge-check
 - [诊断原型 v0.2](docs/mvp-v0.2.md)
 - [初版架构](docs/architecture-v0.1.md)
 - [第三方组件与许可](THIRD_PARTY_NOTICES.md)
+
+### v0.6.1 修复
+
+镜像偏好在摄像头启动及重新连接后重新应用；应用图标改为原始姿态人形，状态栏保留坐姿小兽。

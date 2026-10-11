@@ -1,7 +1,7 @@
 import AppKit
 
 /// The running application's Dock icon follows the system appearance. Finder and
-/// Launch Services continue to use the supplied transparent artwork in the ICNS.
+/// Launch Services continue to use the supplied light artwork in the ICNS.
 @MainActor
 final class AppAppearance {
     private var observation: NSKeyValueObservation?
@@ -34,7 +34,7 @@ final class AppAppearance {
 
     private func updateIcon() {
         let image = Self.usesDarkBackground(NSApplication.shared.effectiveAppearance) ? darkImage : lightImage
-        // A missing resource retains the transparent bundle icon instead of a generic icon.
+        // A missing resource retains the bundle icon instead of a generic icon.
         if let image { NSApplication.shared.applicationIconImage = image }
     }
 }

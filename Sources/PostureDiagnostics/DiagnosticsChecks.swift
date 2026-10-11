@@ -19,7 +19,16 @@ enum DiagnosticsChecks {
             customized.tuning.computePreference = .neuralEngine; customized.bodyBackend = .appleVision
             let copy = try JSONDecoder().decode(MonitorSettings.self, from: JSONEncoder().encode(customized))
             precondition(copy == customized)
-            print("{\"passed\":true,\"checks\":[\"legacy window preferences retained\",\"new 5s/3deg default\",\"tuning and backend roundtrip\"]}")
+            let suite = "kukusit.mirror-check.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            for mirrored in [true, false, true, false] {
+                customized.mirrored = mirrored
+                customized.save(defaults: defaults)
+                precondition(MonitorSettings.load(defaults: UserDefaults(suiteName: suite)!) == customized)
+            }
+
+            print("{\"passed\":true,\"checks\":[\"legacy window preferences retained\",\"new 5s/3deg default\",\"tuning and backend roundtrip\",\"mirror preference reload true and false\"]}")
             exit(0)
         } catch { fputs("Settings check failed: \(error)\n", stderr); exit(1) }
     }

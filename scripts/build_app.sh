@@ -9,7 +9,7 @@ mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources"
 cp "$binary_dir/PostureDiagnostics" "$app_path/Contents/MacOS/PostureDiagnostics"
 cp "$project_root/App/Info.plist" "$app_path/Contents/Info.plist"
 iconset_path="$project_root/.local/icons/Kukusit.iconset"
-swift "$project_root/scripts/build_icons.swift" "$project_root/App/Assets/AppIcon.png" "$iconset_path"
+swift "$project_root/scripts/build_icons.swift" "$project_root/App/Assets/AppIcon.png" "$iconset_path" light
 iconutil -c icns "$iconset_path" -o "$app_path/Contents/Resources/Kukusit.icns"
 for appearance in Light Dark; do
   variant_iconset="$project_root/.local/icons/Kukusit${appearance}.iconset"

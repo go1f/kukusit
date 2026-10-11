@@ -84,12 +84,12 @@ struct MonitorSettings: Codable, Equatable {
         try c.encode(resumeOnLaunch, forKey: .resumeOnLaunch)
         try c.encode(mirrored, forKey: .mirrored)
     }
-    static func load() -> MonitorSettings {
-        guard let data = UserDefaults.standard.data(forKey: "monitorSettingsV1"),
+    static func load(defaults: UserDefaults = .standard) -> MonitorSettings {
+        guard let data = defaults.data(forKey: "monitorSettingsV1"),
               let settings = try? JSONDecoder().decode(MonitorSettings.self, from: data) else { return MonitorSettings() }
         return settings
     }
-    func save() {
-        if let data = try? JSONEncoder().encode(self) { UserDefaults.standard.set(data, forKey: "monitorSettingsV1") }
+    func save(defaults: UserDefaults = .standard) {
+        if let data = try? JSONEncoder().encode(self) { defaults.set(data, forKey: "monitorSettingsV1") }
     }
 }

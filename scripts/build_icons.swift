@@ -39,6 +39,20 @@ for points in [16, 32, 128, 256, 512] {
                               y: contentRect.midY - size.height / 2,
                               width: size.width, height: size.height),
                     from: .zero, operation: .sourceOver, fraction: 1)
+        // The posture symbol is monochrome. Keep it legible on the black Dock tile.
+        if background == "dark" {
+            context.cgContext.setBlendMode(.sourceAtop)
+            context.cgContext.setFillColor(NSColor.white.cgColor)
+            // Tint only the symbol; the rounded tile must retain its black background.
+            let mask = NSBitmapImageRep(data: try! Data(contentsOf: URL(fileURLWithPath: arguments[1])))!.cgImage!
+            let rect = NSRect(x: contentRect.midX - size.width / 2,
+                              y: contentRect.midY - size.height / 2,
+                              width: size.width, height: size.height)
+            context.cgContext.saveGState()
+            context.cgContext.clip(to: rect, mask: mask)
+            context.cgContext.fill(rect)
+            context.cgContext.restoreGState()
+        }
         NSGraphicsContext.restoreGraphicsState()
         let suffix = scale == 2 ? "@2x" : ""
         let file = output.appendingPathComponent("icon_\(points)x\(points)\(suffix).png")
