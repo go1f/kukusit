@@ -38,6 +38,7 @@ struct ChecksMain {
         let suite = PostureCoreTests()
         let reminders = ReminderChecks()
         let habits = TuningHabitChecks()
+        let updates = UpdateChecks()
         let checks: [(String, () throws -> Void)] = [
             ("pixel angle and endpoint order", suite.testNonSquareImageShoulderAngleAndEndpointOrder),
             ("shoulder angle wrap", suite.testShoulderDeviationWrapsAcrossNinetyDegrees),
@@ -129,7 +130,15 @@ struct ChecksMain {
             ("legacy facial feature compatibility", habits.testLegacyFacialFeaturesDecodeAndNewGeometryRoundTrip),
             ("personal examples require neutral and margin", habits.testPersonalPrototypeRequiresNeutralDistanceAndMargin),
             ("examples independent from lip experiment", habits.testPersonalPrototypeRunsWithoutGenericLipExperiment),
-            ("two Hz oral analysis and gaps", habits.testTwoHertzMouthAndExamplesReachThreshold)
+            ("two Hz oral analysis and gaps", habits.testTwoHertzMouthAndExamplesReachThreshold),
+            ("update signed manifest and OS", updates.validSignature),
+            ("update tampering and wrong signing key", updates.tampering),
+            ("update download and size constraints", updates.constraints),
+            ("update atomic replacement", updates.success),
+            ("update failed relaunch rollback", updates.launchRollback),
+            ("update post-swap verification rollback", updates.verificationRollback),
+            ("update stage failure and parent wait", updates.failedStageOrParent),
+            ("update path restrictions and lock", updates.pathAndLock)
         ]
         for (name, check) in checks { try check(); print("PASS: \(name)") }
         print("\(checks.count) / \(checks.count) core checks passed")

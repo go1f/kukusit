@@ -21,6 +21,9 @@ struct MonitorPopover: View {
                 Button(model.hasStarted ? "暂停监测" : "开始监测") { model.hasStarted ? model.pause() : model.start() }
                 Button(desktop.pipVisible ? "收起画中画" : "画中画") { desktop.togglePiP() }
             }
+            if let update = desktop.updater.available {
+                Button("新版本 \(update.version) 可更新") { desktop.updater.checkForUpdates() }
+            }
             Divider()
             Picker("校准情境", selection: $model.selectedContext) {
                 ForEach(ViewingContext.allCases) { Text($0.label).tag($0) }
@@ -34,6 +37,7 @@ struct MonitorPopover: View {
             HStack {
                 Text("仅在本机处理").font(.caption).foregroundStyle(.secondary)
                 Spacer()
+                Button("检查更新…") { desktop.updater.checkForUpdates() }.font(.caption).disabled(!desktop.updater.canCheck)
                 Button("退出") { NSApplication.shared.terminate(nil) }.font(.caption)
             }
         }.padding(14).frame(width: 300).fixedSize(horizontal: false, vertical: true)

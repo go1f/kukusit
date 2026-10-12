@@ -3,10 +3,17 @@ set -euo pipefail
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_root"
 swift build -c release --build-system native --product PostureDiagnostics
+swift build -c release --build-system native --product KukusitUpdateInstaller
 binary_dir="$(swift build -c release --build-system native --show-bin-path)"
 app_path="$project_root/dist/PostureDiagnostics.app"
 mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources"
 cp "$binary_dir/PostureDiagnostics" "$app_path/Contents/MacOS/PostureDiagnostics"
+# Discard the unused Sparkle framework from earlier development builds.
+if [[ -d "$app_path/Contents/Frameworks/Sparkle.framework" ]]; then
+  mv "$app_path/Contents/Frameworks/Sparkle.framework" "$project_root/.local/unused-Sparkle-$(date +%s).framework"
+fi
+mkdir -p "$app_path/Contents/Helpers"
+cp "$binary_dir/KukusitUpdateInstaller" "$app_path/Contents/Helpers/KukusitUpdateInstaller"
 cp "$project_root/App/Info.plist" "$app_path/Contents/Info.plist"
 iconset_path="$project_root/.local/icons/Kukusit.iconset"
 swift "$project_root/scripts/build_icons.swift" "$project_root/App/Assets/AppIcon.png" "$iconset_path" light

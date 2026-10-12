@@ -8,10 +8,13 @@
     <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>Kukusit.icns</string>
-    <key>CFBundleShortVersionString</key><string>0.6.1</string>
-    <key>CFBundleVersion</key><string>11</string>
+    <key>CFBundleShortVersionString</key><string>0.7.0</string>
+    <key>CFBundleVersion</key><string>12</string>
     <key>LSUIElement</key><false/>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSCameraUsageDescription</key><string>仅使用 MacBook 内置摄像头，在本机分析头部、肩部、手与口唇的可见动作。图像不会上传，也不会保存照片或录像。</string>
+    <key>KukusitUpdatePublicKey</key><string>nisqWFfy5oceOQkYlvpbYCQUq+QZ8pn568HPwn3insA=</string>
+    <key>KukusitUpdateFeedURL</key><string>https://github.com/go1f/kukusit/releases/latest/download/update.json</string>
+    <key>KukusitUpdateSigningRequirement</key><string>identifier "com.kojyufu.posturediagnostics" and certificate leaf = H"2817523E7E9887A9E9D1C50D39FA0D2ACB1C9758"</string>
 </dict></plist>

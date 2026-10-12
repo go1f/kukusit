@@ -102,6 +102,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 enum PostureDiagnosticsApp {
     @MainActor static func main() {
+        if let index = CommandLine.arguments.firstIndex(of: "--update-manifest-check"), CommandLine.arguments.count > index+2 {
+            UpdateDiagnostics.check(manifest: CommandLine.arguments[index+1], archive: CommandLine.arguments[index+2])
+        }
         if CommandLine.arguments.contains("--bridge-check") { BridgeChecks.run() }
         if CommandLine.arguments.contains("--settings-check") { DiagnosticsChecks.settings() }
         if CommandLine.arguments.contains("--pipeline-check") { DiagnosticsChecks.pipeline() }

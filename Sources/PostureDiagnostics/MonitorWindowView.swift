@@ -204,6 +204,8 @@ struct SettingsWindowView: View {
                     }
                 }
             }.formStyle(.grouped).tabItem { Label("校准与性能", systemImage: "slider.horizontal.3") }
+            AppUpdateSettingsView(updater: desktop.updater)
+                .tabItem { Label("应用更新", systemImage: "arrow.triangle.2.circlepath") }
         }.padding(12).frame(minWidth: 600, minHeight: 620)
     }
     private func numeric(_ title: String, _ value: Binding<Double>, _ range: ClosedRange<Double>, _ step: Double, _ unit: String) -> some View {
