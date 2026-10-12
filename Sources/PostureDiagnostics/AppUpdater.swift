@@ -90,7 +90,9 @@ final class AppUpdater: NSObject, ObservableObject, NSMenuItemValidation {
     }
     func skipVersion() {
         guard !busy, let item = available else { return }
-        defaults.set(item.build, forKey: "nativeUpdateSkippedBuild"); available = nil
+        defaults.set(item.build, forKey: "nativeUpdateSkippedBuild")
+        if let plan = readyPlan { try? FileManager.default.removeItem(atPath: plan.workspace) }
+        readyPlan = nil; downloadedWorkspace = nil; available = nil
         message = "已跳过该版本；手动检查仍可查看。"
     }
     func cancel() { task?.cancel() }
