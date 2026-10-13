@@ -19,6 +19,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !demo, !args.contains("--layout-check"), model.settings.resumeOnLaunch, !model.profiles.isEmpty,
            AVCaptureDevice.authorizationStatus(for: .video) == .authorized { model.start() }
         if args.contains("--ui-smoke") { runSmoke(model: model, desktop: desktop) }
+        if args.contains("--banner-review"), demo {
+            model.onReminderAlertsChanged = nil
+            desktop.hideMain()
+            let alert = MonitoringAlert(id: "posture.head", title: "歪头", message: "头向左扶正", seconds: 8, recovering: false)
+            desktop.reminders.synchronize([alert], recovered: false, ongoingIDs: [alert.id])
+            desktop.reminders.showReviewWindow()
+            for step in 1...50 {
+                schedule(Double(step)*0.4) {
+                    desktop.reminders.synchronize([alert], recovered: false, ongoingIDs: [alert.id])
+                    self.record("click-\(step)", model: model, desktop: desktop)
+                    self.writeReport(["input":"synthetic clickable banner; no camera", "snapshots":self.smokeLog,
+                        "focusPreserved":desktop.reminders.focusPreserved], flag:"--smoke-report=")
+                }
+            }
+        }
         if args.contains("--recovery-review"), demo {
             model.settings.tuning.sustainedSeconds = 1
             model.settings.tuning.recoverySeconds = 6
@@ -118,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 enum PostureDiagnosticsApp {
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--banner-check") { BannerControllerChecks.run(); return }
         if let index = CommandLine.arguments.firstIndex(of: "--update-manifest-check"), CommandLine.arguments.count > index+2 {
             UpdateDiagnostics.check(manifest: CommandLine.arguments[index+1], archive: CommandLine.arguments[index+2])
         }

@@ -65,7 +65,7 @@ final class DiagnosticModel: ObservableObject {
         }
     }
     var onReminderEvent: ((ReminderEvent) -> Void)?
-    var onReminderAlertsChanged: (([MonitoringAlert], Bool) -> Void)?
+    var onReminderAlertsChanged: (([MonitoringAlert], Bool, Set<String>) -> Void)?
     var onSettingsChanged: ((MonitorSettings, MonitorSettings) -> Void)?
     var onWindowClosed: (() -> Void)?
     private var reminderEngine = ReminderEngine()
@@ -577,7 +577,14 @@ final class DiagnosticModel: ObservableObject {
         let recoveredSafely = recoveryConfirmed && !postureChannels.contains(where: \.isUnresolved)
             && habitStates.isEmpty && (!oralEnabled || habitsReliable)
             && postureChannels.first(where: { $0.channel == .head })?.isObservable == true
-        onReminderAlertsChanged?(alerts, recoveredSafely)
+        var ongoingIDs: Set<String> = []
+        if hasStarted && settings.automaticReminders && collector == nil && !oralSamples.isRecording {
+            for channel in postureChannels where channel.hasReminded && channel.isUnresolved {
+                ongoingIDs.insert("posture." + channel.channel.rawValue)
+            }
+            for state in habitStates where state.confirmed { ongoingIDs.insert("habit." + state.kind.rawValue) }
+        }
+        onReminderAlertsChanged?(alerts, recoveredSafely, ongoingIDs)
         recoveryConfirmed = false
     }
     func beginOralRecording(action: OralPoseAction?) {

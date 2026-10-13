@@ -39,7 +39,9 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         item.button?.target = self; item.button?.action = #selector(togglePopover)
         item.button?.toolTip = "坐姿监测 · 点击查看状态，⌥点击切换画中画"
         model.onReminderEvent = { [weak self] event in self?.reminders.handle(event) }
-        model.onReminderAlertsChanged = { [weak self] alerts, recovered in self?.reminders.synchronize(alerts, recovered: recovered) }
+        model.onReminderAlertsChanged = { [weak self] alerts, recovered, ongoing in
+            self?.reminders.synchronize(alerts, recovered: recovered, ongoingIDs: ongoing)
+        }
         model.onSettingsChanged = { [weak self] old, new in
             guard let self else { return }
             if self.pipPanel == nil {
