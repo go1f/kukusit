@@ -6,4 +6,5 @@ struct MonitoringAlert: Equatable, Identifiable {
     var message: String
     var seconds: Int
     var recovering: Bool
+    var recoveryProgress: Double = 0
 }

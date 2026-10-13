@@ -159,7 +159,7 @@ final class TuningHabitChecks {
             let o = observation(Double(i)/6, features: active ? shifted : FacialFeatures(outerLipAspect: 0.3, mouthOpening: 0.02, mouthShift: 0, cornerSlope: 0))
             result = e.observeDetailed(o, metrics: QualityGate.evaluate(o), reference: reference, tuning: t, hand: false, lips: false, face: true)
             if i == 11 { before = result.states[0].elapsedSeconds }
-            if i == 17 { expectEqual(result.states[0].elapsedSeconds, before); expectTrue(result.states[0].recovering) }
+            if i == 17 { expectEqual(result.states[0].elapsedSeconds, before); expectTrue(result.states[0].recovering); expectTrue(result.states[0].recoverySeconds > 0) }
         }
         expectEqual(result.confirmedStates.map(\.kind), [.facialShift])
         for i in 31...36 {

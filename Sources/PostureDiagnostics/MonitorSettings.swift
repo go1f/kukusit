@@ -32,6 +32,7 @@ struct MonitorSettings: Codable, Equatable {
     var pipSize: PiPSize = .small
     var pipCorner: PiPCorner = .topRight
     var pipScreenID = "automatic"
+    var pipPlacement: FloatingWindowPlacement?
     var resumeOnLaunch = true
     var mirrored = false
     var sustainedSeconds: Double { get { tuning.sustainedSeconds } set { tuning.sustainedSeconds = newValue } }
@@ -41,7 +42,7 @@ struct MonitorSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, tuning, automaticReminders, handMouthMonitoring, experimentalLipMonitoring,
              experimentalFaceMonitoring, mouthShiftMonitoring, oralPoseMonitoring, jawSelfCheck, bodyBackend, pipOnTop, pipShowsVideo, pipShowsSkeleton,
-             pipSize, pipCorner, pipScreenID, resumeOnLaunch, mirrored
+             pipSize, pipCorner, pipScreenID, pipPlacement, resumeOnLaunch, mirrored
     }
     init(from decoder: Decoder) throws {
         self.init()
@@ -62,6 +63,8 @@ struct MonitorSettings: Codable, Equatable {
         pipSize = try c.decodeIfPresent(PiPSize.self, forKey: .pipSize) ?? .small
         pipCorner = try c.decodeIfPresent(PiPCorner.self, forKey: .pipCorner) ?? .topRight
         pipScreenID = try c.decodeIfPresent(String.self, forKey: .pipScreenID) ?? "automatic"
+        let storedPlacement = try? c.decodeIfPresent(FloatingWindowPlacement.self, forKey: .pipPlacement)
+        pipPlacement = storedPlacement?.isValid == true ? storedPlacement : nil
         resumeOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .resumeOnLaunch) ?? true
         // Older releases always saved this value, including their former true default.
         // Preserve saved choices; only a fresh or missing preference adopts the new default.
@@ -69,7 +72,7 @@ struct MonitorSettings: Codable, Equatable {
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(3, forKey: .schemaVersion); try c.encode(tuning.normalized, forKey: .tuning)
+        try c.encode(4, forKey: .schemaVersion); try c.encode(tuning.normalized, forKey: .tuning)
         try c.encode(automaticReminders, forKey: .automaticReminders)
         try c.encode(handMouthMonitoring, forKey: .handMouthMonitoring)
         try c.encode(experimentalLipMonitoring, forKey: .experimentalLipMonitoring)
@@ -81,6 +84,7 @@ struct MonitorSettings: Codable, Equatable {
         try c.encode(pipOnTop, forKey: .pipOnTop); try c.encode(pipShowsVideo, forKey: .pipShowsVideo)
         try c.encode(pipShowsSkeleton, forKey: .pipShowsSkeleton); try c.encode(pipSize, forKey: .pipSize)
         try c.encode(pipCorner, forKey: .pipCorner); try c.encode(pipScreenID, forKey: .pipScreenID)
+        try c.encodeIfPresent(pipPlacement, forKey: .pipPlacement)
         try c.encode(resumeOnLaunch, forKey: .resumeOnLaunch)
         try c.encode(mirrored, forKey: .mirrored)
     }

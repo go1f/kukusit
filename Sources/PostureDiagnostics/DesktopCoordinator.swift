@@ -13,7 +13,11 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
     private var mainVisible = false
     private var mainWindow: NSWindow?
     private var settingsWindow: NSWindow?
-    private var pipPanel: PassivePanel?
+    private var pipPanel: MonitorPanel?
+    private var placingPiP = false
+    private var lastPlacedFrame: NSRect?
+    private var placementWork: DispatchWorkItem?
+    private var spaceMonitor: Any?
     private lazy var statusPanel = StatusPanelController(model: model, desktop: self)
     private var statusItem: NSStatusItem?
     private var subscriptions: Set<AnyCancellable> = []
@@ -21,7 +25,7 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
 
     init(model: DiagnosticModel) {
         self.model = model
-        updater = AppUpdater(enabled: CommandLine.arguments.contains("--update-qa") || !model.isDemo && !CommandLine.arguments.contains("--demo") && !CommandLine.arguments.contains("--ui-smoke") && !CommandLine.arguments.contains("--background-check") && !CommandLine.arguments.contains("--camera-check"))
+        updater = AppUpdater(enabled: CommandLine.arguments.contains("--update-qa") || !model.isDemo && !CommandLine.arguments.contains("--demo") && !CommandLine.arguments.contains("--ui-smoke") && !CommandLine.arguments.contains("--background-check") && !CommandLine.arguments.contains("--camera-check") && !CommandLine.arguments.contains("--layout-check"))
         super.init()
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem = item
@@ -38,9 +42,17 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         model.onReminderAlertsChanged = { [weak self] alerts, recovered in self?.reminders.synchronize(alerts, recovered: recovered) }
         model.onSettingsChanged = { [weak self] old, new in
             guard let self else { return }
+            if self.pipPanel == nil {
+                if old.pipCorner != new.pipCorner || old.pipScreenID != new.pipScreenID {
+                    self.model.settings.pipPlacement = nil
+                } else if old.pipSize != new.pipSize, let saved = self.model.settings.pipPlacement {
+                    self.model.settings.pipPlacement = saved.changingWidth(new.pipSize.width)
+                }
+            }
             if old.pipSize != new.pipSize || old.pipCorner != new.pipCorner || old.pipScreenID != new.pipScreenID
                 || old.pipShowsVideo != new.pipShowsVideo || old.pipShowsSkeleton != new.pipShowsSkeleton {
-                self.placePiP()
+                self.placePiP(presetSize: old.pipSize != new.pipSize,
+                              explicitPosition: old.pipCorner != new.pipCorner || old.pipScreenID != new.pipScreenID)
             }
             self.pipPanel?.level = new.pipOnTop ? .floating : .normal
             self.updateRendering()
@@ -57,7 +69,9 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
             DispatchQueue.main.async { self?.statusPanel.updateGeometry() }
         }.store(in: &subscriptions)
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.placePiP() } }
+            object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated {
+                self?.placementWork?.cancel(); self?.placementWork = nil; self?.placePiP()
+            } }
         updater.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -68,6 +82,20 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
             }
         }.store(in: &subscriptions)
         installApplicationMenu()
+        spaceMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let consumed = MainActor.assumeIsolated {
+                guard let self, event.keyCode == 49,
+                      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+                      let window = event.window, window.isKeyWindow,
+                      window === self.mainWindow || window === self.pipPanel,
+                      window.attachedSheet == nil, NSApplication.shared.modalWindow == nil,
+                      RunLoop.current.currentMode != .eventTracking,
+                      !((window.firstResponder as? NSTextView)?.isEditable ?? false) else { return false }
+                if !event.isARepeat { self.model.toggleMonitoringFromKeyboard() }
+                return true
+            }
+            return consumed ? nil : event
+        }
         updateRendering()
     }
 
@@ -118,10 +146,10 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
     func showPiP() {
         statusPanel.hide()
         if pipPanel == nil {
-            let panel = PassivePanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 340),
+            let panel = MonitorPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 340),
                                      styleMask: [.titled, .closable, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.title = "坐姿画中画"; panel.isReleasedWhenClosed = false
-            panel.isFloatingPanel = true; panel.hidesOnDeactivate = false
+            panel.isFloatingPanel = true; panel.hidesOnDeactivate = false; panel.becomesKeyOnlyIfNeeded = false
             panel.isMovableByWindowBackground = true
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
             panel.contentMinSize = NSSize(width: 320, height: 240)
@@ -135,11 +163,31 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         placePiP(); updateRendering()
         pipPanel?.orderFrontRegardless()
     }
-    func hidePiP() { pipVisible = false; pipPanel?.orderOut(nil); updateRendering() }
+    func hidePiP() { flushPiPPlacement(); pipVisible = false; pipPanel?.orderOut(nil); updateRendering() }
     func expandPiP() { hidePiP(); showMain(expandPreview: true) }
     func collapseMainToPiP() { showPiP(); hideMain() }
+    func windowDidMove(_ notification: Notification) { queuePiPPlacement(notification) }
+    func windowDidResize(_ notification: Notification) { queuePiPPlacement(notification) }
+    private func queuePiPPlacement(_ notification: Notification) {
+        guard !placingPiP, pipVisible, let panel = notification.object as? NSWindow,
+              panel === pipPanel, panel.isVisible, panel.frame != lastPlacedFrame else { return }
+        lastPlacedFrame = nil
+        placementWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.flushPiPPlacement() }
+        }
+        placementWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now()+0.3, execute: work)
+    }
+    private func flushPiPPlacement() {
+        guard placementWork != nil, let panel = pipPanel, let screen = panel.screen else { return }
+        placementWork?.cancel(); placementWork = nil
+        let placement = FloatingWindowPlacement(displayID: router.identifier(screen), frame: panel.frame,
+            visibleFrame: screen.visibleFrame, contentWidth: panel.contentRect(forFrameRect: panel.frame).width)
+        if model.settings.pipPlacement != placement { model.settings.pipPlacement = placement }
+    }
     func windowWillClose(_ notification: Notification) {
-        if let window = notification.object as? NSWindow, window === pipPanel { pipVisible = false; updateRendering() }
+        if let window = notification.object as? NSWindow, window === pipPanel { flushPiPPlacement(); pipVisible = false; updateRendering() }
     }
     func windowDidMiniaturize(_ notification: Notification) {
         if let window = notification.object as? NSWindow, window === mainWindow { mainVisible = false; updateRendering() }
@@ -155,17 +203,36 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         let height = WindowLayout.pipHeight(width: width, visual: visual, demo: model.isDemo)
         return sender.frameRect(forContentRect: NSRect(x: 0, y: 0, width: width, height: height)).size
     }
-    private func placePiP() {
-        guard let panel = pipPanel, let screen = router.screen(preference: model.settings.pipScreenID) else { return }
-        let size = model.settings.pipSize
+    private func placePiP(presetSize: Bool = false, explicitPosition: Bool = false) {
+        guard let panel = pipPanel else { return }
+        flushPiPPlacement()
+        let saved = model.settings.pipPlacement
+        let screen = (!explicitPosition ? saved.flatMap { placement in
+            NSScreen.screens.first { router.identifier($0) == placement.displayID }
+        } : nil) ?? router.screen(preference: model.settings.pipScreenID)
+        guard let screen else { return }
+        placingPiP = true; defer { placingPiP = false }
         let visual = model.settings.pipShowsVideo || model.settings.pipShowsSkeleton
+        let requestedWidth = presetSize ? model.settings.pipSize.width : saved?.contentWidth ?? model.settings.pipSize.width
+        let chrome = panel.frame.height - panel.contentRect(forFrameRect: panel.frame).height
+        let heightBound = visual ? max(320, 20 + (screen.visibleFrame.height - 36 - chrome - 108 - (model.isDemo ? 20 : 0)) * 16 / 9) : 800
+        let width = min(screen.visibleFrame.width - 36, heightBound, requestedWidth)
         panel.contentMinSize = NSSize(width: 320, height: visual ? 260 : 100)
-        panel.setContentSize(NSSize(width: size.width, height: WindowLayout.pipHeight(width: size.width, visual: visual, demo: model.isDemo)))
+        panel.setContentSize(NSSize(width: width, height: WindowLayout.pipHeight(width: width, visual: visual, demo: model.isDemo)))
         let area = screen.visibleFrame, frame = panel.frame
-        let left = model.settings.pipCorner == .topLeft || model.settings.pipCorner == .bottomLeft
-        let top = model.settings.pipCorner == .topLeft || model.settings.pipCorner == .topRight
-        panel.setFrameOrigin(NSPoint(x: left ? area.minX + 18 : area.maxX - frame.width - 18,
-                                    y: top ? area.maxY - frame.height - 18 : area.minY + 18))
+        if !explicitPosition, let saved {
+            panel.setFrameOrigin(saved.origin(visibleFrame: area, windowSize: frame.size))
+        } else {
+            let left = model.settings.pipCorner == .topLeft || model.settings.pipCorner == .bottomLeft
+            let top = model.settings.pipCorner == .topLeft || model.settings.pipCorner == .topRight
+            panel.setFrameOrigin(NSPoint(x: left ? area.minX + 18 : area.maxX - frame.width - 18,
+                                        y: top ? area.maxY - frame.height - 18 : area.minY + 18))
+        }
+        lastPlacedFrame = panel.frame
+        if explicitPosition || presetSize {
+            model.settings.pipPlacement = FloatingWindowPlacement(displayID: router.identifier(screen),
+                frame: panel.frame, visibleFrame: area, contentWidth: width)
+        }
     }
     private func updateRendering() {
         let full = mainVisible && model.previewExpanded
@@ -174,6 +241,8 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
     }
     func previewReminder() { reminders.preview() }
     func shutdown() {
+        flushPiPPlacement(); placementWork?.cancel()
+        if let spaceMonitor { NSEvent.removeMonitor(spaceMonitor) }
         reminders.hide(); statusPanel.hide(); pipPanel?.orderOut(nil)
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
@@ -212,6 +281,8 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
          "statusItemVisible": statusItem?.isVisible ?? false,
          "pipOnTop": pipPanel?.level == .floating, "pipCanBecomeKey": pipPanel?.canBecomeKey ?? false,
          "previewImageRequested": model.renderingImageRequested, "skeletonRenderingRequested": model.renderingSkeletonRequested,
-         "lastFrameHasImage": model.frame?.image != nil]
+         "lastFrameHasImage": model.frame?.image != nil,
+         "pipFrame": pipPanel.map { NSStringFromRect($0.frame) } ?? "",
+         "pipDisplayID": pipPanel?.screen.map { router.identifier($0) } ?? ""]
     }
 }

@@ -26,6 +26,7 @@ final class DiagnosticModel: ObservableObject {
     @Published var p95Milliseconds = 0.0
     @Published var elapsedSeconds = 0.0
     @Published var isDemo = false
+    @Published private(set) var demoPaused = false
     @Published var bodyBackend: BodyBackend = PoseWorker.isAvailable ? .mediaPipe : .appleVision
     let mediaPipeAvailable = PoseWorker.isAvailable
     @Published var demoScenario: DemoScenario = .clear
@@ -92,7 +93,7 @@ final class DiagnosticModel: ObservableObject {
         return String(format: "开口比例 %.3f · 口唇高度比例 %.3f · 嘴角横移 %.3f", f.mouthOpening, f.outerLipAspect, f.mouthShift)
     }
     private let acceleratedDemo = CommandLine.arguments.contains("--ui-smoke")
-    private let diagnosticRun = CommandLine.arguments.contains("--camera-check")
+    private let diagnosticRun = (CommandLine.arguments.contains("--camera-check") || CommandLine.arguments.contains("--session-resume-check"))
     private let camera = CameraController()
     private var collector: CalibrationCollector?
     private var archiveURL: URL?
@@ -103,12 +104,15 @@ final class DiagnosticModel: ObservableObject {
     private var latencies: [Double] = []
     private var workspaceObservers: [NSObjectProtocol] = []
     private var lockObserver: NSObjectProtocol?
+    private var unlockObserver: NSObjectProtocol?
+    private var interruption = MonitoringInterruptionState()
+    private var resumeWork: DispatchWorkItem?
     private weak var diagnosticWindow: NSWindow?
     private var windowCloseObserver: NSObjectProtocol?
     private var pendingStart = false
 
     init(demo: Bool = false) {
-        oralSamples = OralSampleStore(persistent: !demo && !CommandLine.arguments.contains("--camera-check"))
+        oralSamples = OralSampleStore(persistent: !demo && !CommandLine.arguments.contains("--camera-check") && !CommandLine.arguments.contains("--session-resume-check"))
         do {
             let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                   appropriateFor: nil, create: true).appendingPathComponent("PostureDiagnostics", isDirectory: true)
@@ -135,6 +139,8 @@ final class DiagnosticModel: ObservableObject {
                 self.pendingStart = false
                 if self.startedAt == nil { self.startedAt = ProcessInfo.processInfo.systemUptime; self.cpuOrigin = self.processCPUSeconds() }
             } else if !value.isActive {
+                if case .failed = value { self.interruption.requestPause() }
+                if value == .denied { self.interruption.requestPause() }
                 self.pendingStart = false
                 self.analysisHz = 0
                 self.clearCurrentObservation()
@@ -153,16 +159,26 @@ final class DiagnosticModel: ObservableObject {
             MainActor.assumeIsolated { self?.tick() }
         }
         if let tickTimer { RunLoop.main.add(tickTimer, forMode: .common) }
-        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification,
-                     NSWorkspace.sessionDidResignActiveNotification] {
+        for (name, reason) in [(NSWorkspace.willSleepNotification, MonitoringInterruption.systemSleep),
+                               (NSWorkspace.screensDidSleepNotification, .displaySleep),
+                               (NSWorkspace.sessionDidResignActiveNotification, .sessionInactive)] {
             workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.pause(reason: "系统休眠或会话已离开，恢复后请重新开始。") }
+                MainActor.assumeIsolated { self?.suspendForSystem(reason) }
             })
         }
-        // loginwindow's distributed lock signal supplements workspace sleep/session signals.
+        for (name, reason) in [(NSWorkspace.didWakeNotification, MonitoringInterruption.systemSleep),
+                               (NSWorkspace.screensDidWakeNotification, .displaySleep),
+                               (NSWorkspace.sessionDidBecomeActiveNotification, .sessionInactive)] {
+            workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.resumeFromSystem(reason) }
+            })
+        }
         lockObserver = DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: .main
-        ) { [weak self] _ in MainActor.assumeIsolated { self?.pause(reason: "屏幕锁定，已停止摄像头。") } }
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.suspendForSystem(.screenLocked) } }
+        unlockObserver = DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.resumeFromUnlock() } }
         if demo { startDemo() }
     }
 
@@ -191,7 +207,7 @@ final class DiagnosticModel: ObservableObject {
             return title + " " + String(Int(state.elapsedSeconds)) + " 秒" + (state.recovering ? " · 待确认恢复" : "")
         }.joined(separator: "；")
     }
-    var hasStarted: Bool { status.isActive || isDemo || pendingStart }
+    var hasStarted: Bool { status.isActive || (isDemo && !demoPaused) || pendingStart || interruption.requestedRunning }
     var monitorSummary: String {
         if !hasStarted { return status.title }
         if calibrationProgress != nil { return "正在校准 · 提醒暂缓" }
@@ -246,7 +262,26 @@ final class DiagnosticModel: ObservableObject {
         return Geometry.wrapDegrees(value - baseline.median, period: 180)
     }
 
+    func toggleMonitoringFromKeyboard() {
+        if isDemo {
+            if demoPaused { startDemo() }
+            else {
+                demoTimer?.invalidate(); demoTimer = nil; demoPaused = true
+                status = .paused("演示已暂停，按空格继续。")
+                clearCurrentObservation(); applyReminderResult(reminderEngine.reset())
+                habitEngine.reset(); habitStates = []; habitsReliable = false; refreshReminderPresentation()
+            }
+        } else { hasStarted ? pause() : start() }
+    }
     func start() {
+        resumeWork?.cancel()
+        guard interruption.requestStart() else {
+            status = .paused("系统暂时中断监测，解锁亮屏后会自动继续。")
+            return
+        }
+        startCapture()
+    }
+    private func startCapture() {
         stopDemo()
         clearCurrentObservation()
         resetStats()
@@ -259,6 +294,10 @@ final class DiagnosticModel: ObservableObject {
         camera.start(backend: bodyBackend)
     }
     func pause(reason: String = "已停止采集并清除预览画面。") {
+        interruption.requestPause(); resumeWork?.cancel()
+        stopCapture(reason: reason, saveManualPause: true)
+    }
+    private func stopCapture(reason: String, saveManualPause: Bool) {
         stopDemo()
         pendingStart = false
         camera.stop(reason: reason)
@@ -266,10 +305,33 @@ final class DiagnosticModel: ObservableObject {
         analysisHz = 0
         clearCurrentObservation()
         cancelCalibration(message: "观察已暂停，校准未保存。")
-        settings.resumeOnLaunch = false
+        if saveManualPause { settings.resumeOnLaunch = false }
         applyReminderResult(reminderEngine.reset())
         habitEngine.reset(); habitSummary = "口部观察已暂停"; nextJawCheck = nil
         habitStates = []; habitsReliable = false; oralSamples.cancel(); refreshReminderPresentation()
+    }
+    func suspendForSystem(_ reason: MonitoringInterruption) {
+        guard !isDemo else { return }
+        interruption.suspend(reason); resumeWork?.cancel()
+        guard interruption.requestedRunning || status.isActive || pendingStart else { return }
+        stopCapture(reason: "系统暂时中断监测，解锁亮屏后会自动继续。", saveManualPause: false)
+    }
+    func resumeFromSystem(_ reason: MonitoringInterruption) {
+        interruption.resume(reason); scheduleSystemResume()
+    }
+    func resumeFromUnlock() { interruption.unlocked(); scheduleSystemResume() }
+    private func scheduleSystemResume() {
+        resumeWork?.cancel()
+        guard !isDemo, interruption.canResume, !status.isActive else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.interruption.canResume, !self.status.isActive,
+                      AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { return }
+                self.startCapture()
+            }
+        }
+        resumeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now()+0.8, execute: work)
     }
     func backendDidChange() {
         settings.bodyBackend = bodyBackend
@@ -288,10 +350,11 @@ final class DiagnosticModel: ObservableObject {
         }
     }
     func shutdown() {
-        tickTimer?.invalidate(); demoTimer?.invalidate()
+        tickTimer?.invalidate(); demoTimer?.invalidate(); resumeWork?.cancel()
         camera.shutdown()
         workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         if let lockObserver { DistributedNotificationCenter.default().removeObserver(lockObserver) }
+        if let unlockObserver { DistributedNotificationCenter.default().removeObserver(unlockObserver) }
         if let windowCloseObserver { NotificationCenter.default.removeObserver(windowCloseObserver) }
     }
 
@@ -384,7 +447,7 @@ final class DiagnosticModel: ObservableObject {
            abs(metrics?.yaw ?? 90) <= 20 {
             if nextJawCheck == nil { nextJawCheck = now + settings.tuning.normalized.jawCheckSeconds }
             if let due = nextJawCheck, now >= due {
-                onReminderEvent?(.nudge("放松下颌，检查自己是否正在咬紧牙齿。"))
+                onReminderEvent?(.nudge("放松下颌"))
                 nextJawCheck = now + settings.tuning.normalized.jawCheckSeconds
             }
         } else { nextJawCheck = nil }
@@ -497,13 +560,15 @@ final class DiagnosticModel: ObservableObject {
                 if case .recovering = channel.state { recovering = true } else { recovering = false }
                 alerts.append(MonitoringAlert(id: "posture." + channel.channel.rawValue,
                     title: channel.channel == .head ? "歪头" : "肩线偏移", message: kind.message,
-                    seconds: Int(channel.accumulatedSeconds), recovering: recovering))
+                    seconds: Int(channel.accumulatedSeconds), recovering: recovering,
+                    recoveryProgress: min(1, channel.recoverySeconds / max(0.1, effectiveReminderConfiguration.recoverySeconds))))
             }
             if habitsReliable {
                 for state in habitStates where state.confirmed {
-                    let message = state.exampleLabel.map { "外观接近“\($0)”示范，轻轻放松口唇和下颌。" } ?? state.kind.message
+                    let message = state.kind.message
                     alerts.append(MonitoringAlert(id: "habit." + state.kind.rawValue, title: "口部变化", message: message,
-                        seconds: Int(state.elapsedSeconds), recovering: state.recovering))
+                        seconds: Int(state.elapsedSeconds), recovering: state.recovering,
+                        recoveryProgress: min(1, state.recoverySeconds / max(0.1, settings.tuning.recoverySeconds))))
                 }
             }
         }
@@ -603,7 +668,7 @@ final class DiagnosticModel: ObservableObject {
         camera.stop(reason: "演示模式：摄像头未启动。")
         cancelCalibration()
         resetStats()
-        isDemo = true; startedAt = ProcessInfo.processInfo.systemUptime
+        isDemo = true; demoPaused = false; startedAt = ProcessInfo.processInfo.systemUptime
         reminderEngine.configuration = effectiveReminderConfiguration
         applyReminderResult(reminderEngine.reset())
         status = .idle
@@ -615,7 +680,7 @@ final class DiagnosticModel: ObservableObject {
         emitDemoFrame()
     }
     private func stopDemo() {
-        demoTimer?.invalidate(); demoTimer = nil; isDemo = false
+        demoTimer?.invalidate(); demoTimer = nil; isDemo = false; demoPaused = false
         reminderEngine.configuration = effectiveReminderConfiguration
     }
     private func emitDemoFrame() {

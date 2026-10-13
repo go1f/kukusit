@@ -19,6 +19,12 @@ enum DiagnosticsChecks {
             customized.tuning.computePreference = .neuralEngine; customized.bodyBackend = .appleVision
             let copy = try JSONDecoder().decode(MonitorSettings.self, from: JSONEncoder().encode(customized))
             precondition(copy == customized)
+            customized.pipPlacement = FloatingWindowPlacement(displayID: "external", frame: CGRect(x: -800, y: 250, width: 440, height: 340),
+                visibleFrame: CGRect(x: -1440, y: 0, width: 1440, height: 900), contentWidth: 440)
+            let restoredPlacement = try JSONDecoder().decode(MonitorSettings.self, from: JSONEncoder().encode(customized))
+            precondition(restoredPlacement == customized)
+            let malformed = try JSONDecoder().decode(MonitorSettings.self, from: Data(#"{"mirrored":true,"pipPlacement":{"displayID":"x","xFraction":-4,"yFraction":0,"contentWidth":440}}"#.utf8))
+            precondition(malformed.mirrored && malformed.pipPlacement == nil)
             let suite = "kukusit.mirror-check.\(UUID().uuidString)"
             let defaults = UserDefaults(suiteName: suite)!
             defer { defaults.removePersistentDomain(forName: suite) }

@@ -39,6 +39,7 @@ struct ChecksMain {
         let reminders = ReminderChecks()
         let habits = TuningHabitChecks()
         let updates = UpdateChecks()
+        let sessions = SessionChecks()
         let checks: [(String, () throws -> Void)] = [
             ("pixel angle and endpoint order", suite.testNonSquareImageShoulderAngleAndEndpointOrder),
             ("shoulder angle wrap", suite.testShoulderDeviationWrapsAcrossNinetyDegrees),
@@ -138,7 +139,13 @@ struct ChecksMain {
             ("update failed relaunch rollback", updates.launchRollback),
             ("update post-swap verification rollback", updates.verificationRollback),
             ("update stage failure and parent wait", updates.failedStageOrParent),
-            ("update path restrictions and lock", updates.pathAndLock)
+            ("update path restrictions and lock", updates.pathAndLock),
+            ("recovery animation uses evidence", reminders.testRecoverySnapshotProgressUsesRealEvidence),
+            ("overlapping system interruption", sessions.overlappingInterruptions),
+            ("manual pause cancels automatic resume", sessions.manualPause),
+            ("unlock clears coalesced sleep signals", sessions.unlockAndInitialPause),
+            ("PiP negative-coordinate placement", sessions.placementRoundtrip),
+            ("PiP changed resolution stays on screen", sessions.placementBounds)
         ]
         for (name, check) in checks { try check(); print("PASS: \(name)") }
         print("\(checks.count) / \(checks.count) core checks passed")

@@ -16,9 +16,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let desktop = DesktopCoordinator(model: model)
         self.model = model; self.desktop = desktop
         if !args.contains("--background-check") { desktop.showMain(expandPreview: true) }
-        if !demo, model.settings.resumeOnLaunch, !model.profiles.isEmpty,
+        if !demo, !args.contains("--layout-check"), model.settings.resumeOnLaunch, !model.profiles.isEmpty,
            AVCaptureDevice.authorizationStatus(for: .video) == .authorized { model.start() }
         if args.contains("--ui-smoke") { runSmoke(model: model, desktop: desktop) }
+        if args.contains("--recovery-review"), demo {
+            model.settings.tuning.sustainedSeconds = 1
+            model.settings.tuning.recoverySeconds = 6
+            model.demoScenario = .headTilt
+            schedule(4) { model.demoScenario = .clear }
+            for (index, seconds) in [4.3, 5.5, 7.5, 9.3, 10.7, 12.0].enumerated() {
+                schedule(seconds) { self.record("lights-\(index)", model: model, desktop: desktop) }
+            }
+            schedule(13) {
+                self.writeReport(["input": "synthetic recovery animation; no camera", "snapshots": self.smokeLog,
+                    "focusPreserved": desktop.reminders.focusPreserved], flag: "--smoke-report=")
+            }
+        }
         if args.contains("--camera-check") {
             guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
                 self.writeReport(["cameraCheck": "needs existing camera permission; no access requested"], flag: "--background-report=")
@@ -88,6 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                          "monitorState": model.monitorSummary, "monitorDetail": model.monitorDetail ?? "",
                          "postureChannels": model.postureChannels.map { ["channel": $0.channel.rawValue,
                             "seconds": $0.accumulatedSeconds, "unresolved": $0.isUnresolved, "reminded": $0.hasReminded] }])
+        if CommandLine.arguments.contains("--recovery-review") {
+            writeReport(["snapshots": smokeLog, "focusPreserved": desktop.reminders.focusPreserved], flag: "--smoke-report=")
+        }
     }
     private func writeReport(_ report: [String: Any], flag: String) {
         guard let argument = CommandLine.arguments.first(where: { $0.hasPrefix(flag) }),
@@ -105,6 +121,7 @@ enum PostureDiagnosticsApp {
         if let index = CommandLine.arguments.firstIndex(of: "--update-manifest-check"), CommandLine.arguments.count > index+2 {
             UpdateDiagnostics.check(manifest: CommandLine.arguments[index+1], archive: CommandLine.arguments[index+2])
         }
+        if CommandLine.arguments.contains("--session-resume-check") { SessionResumeChecks.run(); return }
         if CommandLine.arguments.contains("--bridge-check") { BridgeChecks.run() }
         if CommandLine.arguments.contains("--settings-check") { DiagnosticsChecks.settings() }
         if CommandLine.arguments.contains("--pipeline-check") { DiagnosticsChecks.pipeline() }

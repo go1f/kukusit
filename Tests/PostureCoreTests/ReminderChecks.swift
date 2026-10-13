@@ -344,4 +344,17 @@ final class ReminderChecks {
         expectTrue(channel(result, .shoulders).accumulatedSeconds >= 6)
         expectFalse(channel(result, .head).isUnresolved)
     }
+    func testRecoverySnapshotProgressUsesRealEvidence() {
+        var engine = sensitiveEngine()
+        _ = feed(&engine, start: 0, seconds: 8) { self.input($0) }
+        _ = feed(&engine, start: 8, seconds: 1.8) { self.input($0, roll: 0) }
+        let recovering = channel(engine.observe(input(9.8, roll: 0)), .head)
+        expectTrue(recovering.hasReminded)
+        expectTrue(recovering.recoverySeconds > 0)
+        expectTrue(recovering.recoverySeconds < 2)
+        let interrupted = channel(engine.observe(input(10, roll: 14)), .head)
+        expectEqual(interrupted.recoverySeconds, 0)
+        expectTrue(interrupted.isUnresolved)
+    }
+
 }

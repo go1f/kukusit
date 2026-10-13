@@ -79,7 +79,7 @@ struct PiPView: View {
                 Spacer(minLength: 0)
                 Button { model.hasStarted ? model.pause() : model.start() } label: {
                     Image(systemName: model.hasStarted ? "pause.fill" : "play.fill")
-                }.buttonStyle(.bordered).help(model.hasStarted ? "暂停监测" : "开始监测")
+                }.buttonStyle(.bordered).help((model.hasStarted ? "暂停监测" : "开始监测") + "（聚焦后可按空格）")
                     .accessibilityLabel(model.hasStarted ? "暂停监测" : "开始监测")
             }
             if model.isDemo { Text("合成输入 · 摄像头未启动").font(.caption2).foregroundStyle(.secondary) }
@@ -102,15 +102,15 @@ private struct PiPPreview: View {
             if model.settings.pipShowsVideo {
                 if model.isDemo, let image = model.frame?.image {
                     Image(decorative: image, scale: 1).resizable().scaledToFit().scaleEffect(x: model.mirrored ? -1 : 1, y: 1)
-                } else if model.hasStarted {
+                } else if model.status.isActive {
                     CameraPreview(session: model.cameraSession, mirrored: model.mirrored, enabled: model.renderingImageRequested)
                 }
             }
             if model.settings.pipShowsSkeleton, let frame = model.frame {
                 LandmarkOverlay(observation: frame.observation, metrics: model.metrics, mirrored: model.mirrored)
             }
-            if model.frame == nil && (model.isDemo || model.firstVideoSeconds == nil) {
-                Label(model.hasStarted ? "等待清晰画面" : "已暂停", systemImage: "camera")
+            if model.frame == nil && (model.isDemo || !model.status.isActive || model.firstVideoSeconds == nil) {
+                Label(model.hasStarted ? (model.status.isActive || model.isDemo ? "等待清晰画面" : "等待系统恢复") : "已暂停", systemImage: "camera")
                     .font(.caption).foregroundStyle(.white.opacity(0.8))
             }
         }

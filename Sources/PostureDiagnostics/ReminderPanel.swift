@@ -3,6 +3,11 @@ import SwiftUI
 import QuartzCore
 import PostureCore
 
+final class MonitorPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 final class PassivePanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
@@ -24,13 +29,21 @@ private struct BannerView: View {
             Image(systemName: content.recovered ? "checkmark.circle.fill" : "figure.seated.side")
                 .font(.title2).foregroundStyle(content.recovered ? Color.green : Color.accentColor)
             VStack(alignment: .leading, spacing: 3) {
-                Text(content.recovered ? "已恢复" : "轻轻调整一下").font(.caption).foregroundStyle(.secondary)
+                Text(content.recovered ? "已恢复" : (!content.alerts.isEmpty && content.alerts.allSatisfy(\.recovering) ? "保持一下" : "调整一下"))
+                    .font(.caption).foregroundStyle(.secondary)
                 if content.alerts.isEmpty {
                     Text(content.text).font(.body.weight(.medium))
                 } else {
                     ForEach(content.alerts) { alert in
-                        Text(alert.message + (alert.recovering ? "（待确认恢复）" : ""))
-                            .font(.system(size: 13, weight: .medium)).fixedSize(horizontal: false, vertical: true)
+                        if alert.recovering {
+                            HStack(spacing: 10) {
+                                Text(alert.title).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
+                                RecoveryLights(progress: alert.recoveryProgress)
+                            }
+                        } else {
+                            Text(alert.message).font(.system(size: 13, weight: .medium))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
             }
@@ -41,6 +54,24 @@ private struct BannerView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.primary.opacity(0.08)))
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct RecoveryLights: View {
+    let progress: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        HStack(spacing: 7) {
+            ForEach(0..<3) { index in
+                let amount = min(1, max(0, (progress - Double(index) * 0.27) / 0.2))
+                Text("🟢").font(.system(size: 17))
+                    .opacity(0.15 + 0.85 * amount)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: amount)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("正在确认恢复")
+        .accessibilityValue("\(Int(min(1, max(0, progress))*100))%")
     }
 }
 
@@ -74,7 +105,7 @@ final class ReminderPanelController {
         switch event {
         case .correction(let kind): habitBanner = false; show(kind.message, recovered: false, duration: nil)
         case .recovered:
-            if visible && !habitBanner && !content.recovered { recoveryCount += 1; show("继续保持舒适，记得偶尔活动。", recovered: true, duration: 1.8) }
+            if visible && !habitBanner && !content.recovered { recoveryCount += 1; show("保持放松", recovered: true, duration: 1.8) }
         case .quiet: if activeAlerts.isEmpty && !habitBanner { hide() }
         case .nudge(let message):
             guard activeAlerts.isEmpty, ProcessInfo.processInfo.systemUptime - lastShownAt >= 10 else { return }
@@ -84,7 +115,7 @@ final class ReminderPanelController {
     func preview() {
         guard activeAlerts.isEmpty else { return }
         habitBanner = true
-        show("坐直一点，放松肩膀。", recovered: false, duration: 4)
+        show("坐正，放松肩膀", recovered: false, duration: 4)
     }
     func synchronize(_ alerts: [MonitoringAlert], recovered: Bool) {
         let previous = activeAlerts
@@ -94,7 +125,7 @@ final class ReminderPanelController {
             content.alerts = []
             if recovered && visible {
                 recoveryCount += 1
-                show("继续保持舒适，记得偶尔活动。", recovered: true, duration: 1.8)
+                show("保持放松", recovered: true, duration: 1.8)
             } else { hide() }
             return
         }
@@ -114,7 +145,7 @@ final class ReminderPanelController {
         let width = min(460, max(240, area.width - 24))
         let textWidth = width - 72
         let rows = content.alerts.map { alert in
-            alert.message + (alert.recovering ? "（待确认恢复）" : "")
+            alert.recovering ? alert.title + " 🟢 🟢 🟢" : alert.message
         }
         let textHeight = rows.reduce(CGFloat(0)) { total, text in
             total + ceil((text as NSString).boundingRect(with: NSSize(width: textWidth, height: 1000),
@@ -163,10 +194,11 @@ final class ReminderPanelController {
         })
     }
     var snapshot: [String: Any] {
-        ["visible": visible, "showCount": showCount, "recoveryCount": recoveryCount,
+        ["windowID": panel.windowNumber, "visible": visible, "showCount": showCount, "recoveryCount": recoveryCount,
          "focusPreserved": focusPreserved, "canBecomeKey": panel.canBecomeKey,
          "ignoresMouseEvents": panel.ignoresMouseEvents, "screenName": lastScreenName,
          "persistent": !activeAlerts.isEmpty, "activeAlertIDs": activeAlerts.map(\.id), "alertCount": activeAlerts.count,
-         "panelHeight": panel.frame.height]
+         "panelHeight": panel.frame.height,
+         "recoveryProgress": activeAlerts.filter(\.recovering).map(\.recoveryProgress)]
     }
 }

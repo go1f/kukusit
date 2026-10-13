@@ -22,9 +22,9 @@ public enum ReminderKind: String, Codable, Sendable {
         switch self {
         // Native unmirrored Vision roll is positive counterclockwise:
         // positive roll means the person's head leans toward their right.
-        case .headTowardLeft: return "头稍微向左侧扶正，放松肩膀。"
-        case .headTowardRight: return "头稍微向右侧扶正，放松肩膀。"
-        case .shoulders: return "坐直一点，放松肩膀。"
+        case .headTowardLeft: return "头向左扶正"
+        case .headTowardRight: return "头向右扶正"
+        case .shoulders: return "双肩放平"
         }
     }
 }
@@ -112,6 +112,7 @@ public struct ReminderChannelSnapshot: Equatable, Sendable {
     public let kind: ReminderKind?
     public let state: MonitorState
     public let accumulatedSeconds: Double
+    public let recoverySeconds: Double
     public let hasReminded: Bool
     public let isUnresolved: Bool
     // Each channel can become unavailable independently. Missing shoulders must
@@ -157,7 +158,7 @@ public struct ReminderEngine: Sendable {
         var activeKind: ReminderKind? { candidate ?? episode }
         var snapshot: ReminderChannelSnapshot {
             ReminderChannelSnapshot(channel: channel, kind: activeKind, state: state,
-                accumulatedSeconds: badSeconds, hasReminded: episode != nil,
+                accumulatedSeconds: badSeconds, recoverySeconds: goodSeconds, hasReminded: episode != nil,
                 isUnresolved: activeKind != nil, isObservable: observable)
         }
         mutating func clearEvidence(clearEpisode: Bool = false) {

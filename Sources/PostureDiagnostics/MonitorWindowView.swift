@@ -21,7 +21,7 @@ struct MonitorWindowView: View {
                 if model.isDemo, let frame = model.frame, let image = frame.image {
                     Image(decorative: image, scale: 1).resizable().scaledToFit().scaleEffect(x: model.mirrored ? -1 : 1, y: 1)
                     LandmarkOverlay(observation: frame.observation, metrics: model.metrics, mirrored: model.mirrored)
-                } else if model.hasStarted {
+                } else if model.status.isActive {
                     CameraPreview(session: model.cameraSession, mirrored: model.mirrored, enabled: model.renderingImageRequested)
                     if let frame = model.frame {
                         LandmarkOverlay(observation: frame.observation, metrics: model.metrics, mirrored: model.mirrored)
@@ -30,7 +30,7 @@ struct MonitorWindowView: View {
                 } else {
                     VStack(spacing: 10) {
                         Image(systemName: "camera.viewfinder").font(.system(size: 40, weight: .light))
-                        Text(model.hasStarted ? "等待清晰画面" : "监测已暂停").font(.headline)
+                        Text(model.hasStarted ? "等待系统恢复后继续监测" : "监测已暂停").font(.headline)
                         if !model.hasStarted { Button("开始监测") { model.start() }.buttonStyle(.borderedProminent) }
                         if model.status == .denied { Button("打开摄像头设置") { model.openPrivacySettings() } }
                     }.foregroundStyle(.white.opacity(0.85))
@@ -42,7 +42,7 @@ struct MonitorWindowView: View {
                 Spacer()
                 Text(model.monitorSummary).font(.callout).foregroundStyle(.secondary).lineLimit(1).help(model.monitorSummary)
                 Button(model.hasStarted ? "暂停监测" : "开始监测") { model.hasStarted ? model.pause() : model.start() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.borderedProminent).help("窗口聚焦时，按空格暂停或继续监测")
             }
             if let detail = model.monitorDetail {
                 Text(detail).font(.caption).foregroundStyle(.secondary)
@@ -154,10 +154,11 @@ struct SettingsWindowView: View {
                     Toggle("显示骨架", isOn: $model.settings.pipShowsSkeleton)
                     Picker("大小", selection: $model.settings.pipSize) { ForEach(PiPSize.allCases) { Text($0.label).tag($0) } }
                     Picker("显示器", selection: $model.settings.pipScreenID) {
-                        Text("当前工作显示器").tag("automatic")
+                        Text("自动（优先上次位置）").tag("automatic")
                         ForEach(router.displays) { Text($0.name).tag($0.id) }
                     }
-                    Picker("位置", selection: $model.settings.pipCorner) { ForEach(PiPCorner.allCases) { Text($0.label).tag($0) } }
+                    Picker("默认位置", selection: $model.settings.pipCorner) { ForEach(PiPCorner.allCases) { Text($0.label).tag($0) } }
+                    Text("拖动后自动记住位置、显示器和尺寸。外接屏暂时断开时会移回可用屏幕。").font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("启动时继续上次监测", isOn: $model.settings.resumeOnLaunch)
             }.formStyle(.grouped).tabItem { Label("视频预览", systemImage: "video") }

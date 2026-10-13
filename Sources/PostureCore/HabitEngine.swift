@@ -5,14 +5,14 @@ public enum HabitKind: String, Codable, CaseIterable, Sendable {
     case jawAppearance, upperLipAppearance, lowerLipAppearance, tongueAppearance
     public var message: String {
         switch self {
-        case .handMouth: return "手离开嘴唇，轻轻放松下颌。"
-        case .lipChange: return "口唇形态持续有变化，检查是否正在咬唇，轻轻放松。"
-        case .facialShift: return "嘴角或口唇持续偏离个人参考，轻轻放松口部。"
-        case .eyelidChange: return "眼周姿态持续偏离个人参考，留意是否正单侧眯眼。"
-        case .jawAppearance: return "口部外观接近你的下颌紧张示范，检查并轻轻放松。"
-        case .upperLipAppearance: return "口部外观接近你的上唇动作示范，轻轻放松嘴唇。"
-        case .lowerLipAppearance: return "口部外观接近你的下唇动作示范，轻轻放松嘴唇。"
-        case .tongueAppearance: return "口部外观接近你的舌部动作示范，轻轻放松舌头和下颌。"
+        case .handMouth: return "手离开嘴唇"
+        case .lipChange: return "放松嘴唇"
+        case .facialShift: return "放松嘴角"
+        case .eyelidChange: return "放松双眼"
+        case .jawAppearance: return "放松下颌"
+        case .upperLipAppearance: return "放松嘴唇"
+        case .lowerLipAppearance: return "放松嘴唇"
+        case .tongueAppearance: return "放松舌头"
         }
     }
 }
@@ -22,6 +22,7 @@ public struct HabitState: Equatable, Sendable {
     public var thresholdSeconds: Double
     public var confirmed: Bool
     public var recovering: Bool
+    public var recoverySeconds: Double
     public var exampleLabel: String?
     public var message: String { kind.message }
 }
@@ -176,7 +177,7 @@ public struct HabitEngine: Sendable {
             guard let episode = episodes[kind] else { return nil }
             return HabitState(kind: kind, elapsedSeconds: episode.elapsed,
                 thresholdSeconds: kind == .handMouth ? t.handMouthSeconds : t.lipChangeSeconds,
-                confirmed: episode.confirmed, recovering: !episode.wasActive, exampleLabel: episode.exampleLabel)
+                confirmed: episode.confirmed, recovering: !episode.wasActive, recoverySeconds: episode.recovery, exampleLabel: episode.exampleLabel)
         }
     }
 
