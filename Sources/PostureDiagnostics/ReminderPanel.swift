@@ -29,24 +29,40 @@ private final class BannerHostingView: NSHostingView<BannerView> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+private enum BannerLayout {
+    static let iconWidth: CGFloat = 18
+    static let iconGap: CGFloat = 9
+    static let horizontalPadding: CGFloat = 14
+    static let verticalPadding: CGFloat = 9
+    static let rowGap: CGFloat = 5
+    static let recoveryGap: CGFloat = 8
+    static let lightSize: CGFloat = 22
+    static let lightGap: CGFloat = 6
+    static let lightsWidth = lightSize * 3 + lightGap * 2
+    static let chromeWidth = horizontalPadding * 2 + iconWidth + iconGap
+}
+
 private struct BannerView: View {
     @ObservedObject var content: BannerContent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var radius: CGFloat { min(content.height/2, 22) }
     var body: some View {
         Button(action: content.dismiss) {
-            HStack(spacing: 9) {
+            HStack(spacing: BannerLayout.iconGap) {
                 Image(systemName: content.recovered ? "checkmark.circle.fill" : "figure.seated.side")
                     .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(content.recovered ? Color.green : (content.island ? Color.white.opacity(0.85) : Color.accentColor))
-                VStack(alignment: .leading, spacing: 5) {
+                    .frame(width: BannerLayout.iconWidth)
+                    .fixedSize()
+                VStack(alignment: .leading, spacing: BannerLayout.rowGap) {
                     if content.alerts.isEmpty {
                         Text(content.recovered ? "已恢复" : content.text).font(.system(size: 13, weight: .medium))
                     } else {
                         ForEach(content.alerts) { alert in
                             if alert.recovering {
-                                HStack(spacing: 8) {
+                                HStack(spacing: BannerLayout.recoveryGap) {
                                     Text(alert.title).font(.system(size: 12, weight: .medium))
+                                        .lineLimit(1).truncationMode(.tail)
                                         .foregroundStyle(content.island ? Color.white.opacity(0.6) : Color.secondary)
                                     RecoveryLights(progress: alert.recoveryProgress)
                                 }
@@ -57,10 +73,11 @@ private struct BannerView: View {
                         }
                     }
                 }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .foregroundStyle(content.island ? Color.white : Color.primary)
-            .padding(.horizontal, 14).padding(.vertical, 9)
+            .padding(.horizontal, BannerLayout.horizontalPadding)
+            .padding(.vertical, BannerLayout.verticalPadding)
             .frame(width: content.width, height: content.height)
             .background {
                 if content.island {
@@ -86,14 +103,18 @@ private struct RecoveryLights: View {
     let progress: Double
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: BannerLayout.lightGap) {
             ForEach(0..<3) { index in
                 let amount = min(1, max(0, (progress - Double(index) * 0.27) / 0.2))
                 Text("🟢").font(.system(size: 15))
+                    .fixedSize()
+                    .frame(width: BannerLayout.lightSize, height: BannerLayout.lightSize)
                     .opacity(0.15 + 0.85 * amount)
                     .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: amount)
             }
         }
+        .fixedSize(horizontal: true, vertical: true)
+        .layoutPriority(1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("正在确认恢复")
         .accessibilityValue("\(Int(min(1, max(0, progress))*100))%")
@@ -145,7 +166,7 @@ final class ReminderPanelController {
     func showReviewWindow() {
         // A standard QA window renders the real component for native UI tools that
         // cannot target passive borderless windows. It is never opened in normal use.
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 90),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: max(320, content.width), height: max(90, content.height+24)),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "提示样式核验"; window.isReleasedWhenClosed = false
         window.contentView = BannerHostingView(rootView: BannerView(content: content))
@@ -200,19 +221,24 @@ final class ReminderPanelController {
         panel.level = single ? .statusBar : .floating
         let area = screen.visibleFrame
         let font = NSFont.systemFont(ofSize: 13, weight: .medium)
-        let rows = content.alerts.isEmpty ? [content.recovered ? "已恢复" : content.text] : content.alerts.map {
-            $0.recovering ? $0.title + "  🟢 🟢 🟢" : $0.message
-        }
-        let longest = rows.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 80
+        let titleFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let rows: [(text: String, recovering: Bool)] = content.alerts.isEmpty
+            ? [(content.recovered ? "已恢复" : content.text, false)]
+            : content.alerts.map { ($0.recovering ? $0.title : $0.message, $0.recovering) }
+        let longest = rows.map { row in
+            let textWidth = (row.text as NSString).size(withAttributes: [.font: row.recovering ? titleFont : font]).width
+            return textWidth + (row.recovering ? BannerLayout.recoveryGap + BannerLayout.lightsWidth : 0)
+        }.max() ?? 80
         let left = screen.auxiliaryTopLeftArea ?? .zero, right = screen.auxiliaryTopRightArea ?? .zero
         let cutoutWidth = single && !left.isEmpty && !right.isEmpty ? max(0, right.minX-left.maxX) : 0
         let minimumWidth = max(160, min(260, cutoutWidth + 20))
-        let width = min(320, area.width-24, max(minimumWidth, ceil(longest)+60))
-        let textHeight = rows.reduce(CGFloat(0)) { total, text in
-            total + max(17, ceil((text as NSString).boundingRect(with: NSSize(width: width-60, height: 1000),
+        let width = min(320, area.width-24, max(minimumWidth, ceil(longest)+BannerLayout.chromeWidth))
+        let textHeight = rows.reduce(CGFloat(0)) { total, row in
+            if row.recovering { return total + BannerLayout.lightSize }
+            return total + max(17, ceil((row.text as NSString).boundingRect(with: NSSize(width: width-BannerLayout.chromeWidth, height: 1000),
                 options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font]).height))
-        } + CGFloat(max(0, rows.count-1))*5
-        let height = min(area.height-24, max(38, textHeight+18))
+        } + CGFloat(max(0, rows.count-1))*BannerLayout.rowGap
+        let height = min(area.height-24, max(38, textHeight+BannerLayout.verticalPadding*2))
         content.width = width; content.height = height
         // Attach just below the hardware cutout on notched Macs. Without a cutout,
         // the compact island sits at the top centre of the menu bar.

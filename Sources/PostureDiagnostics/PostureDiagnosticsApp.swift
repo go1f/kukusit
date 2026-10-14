@@ -22,12 +22,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if args.contains("--banner-review"), demo {
             model.onReminderAlertsChanged = nil
             desktop.hideMain()
-            let alert = MonitoringAlert(id: "posture.head", title: "歪头", message: "头向左扶正", seconds: 8, recovering: false)
-            desktop.reminders.synchronize([alert], recovered: false, ongoingIDs: [alert.id])
+            let lights = args.contains("--lights-layout-review")
+            let alerts = lights ? [
+                MonitoringAlert(id: "posture.head", title: "歪头", message: "", seconds: 8, recovering: true, recoveryProgress: 1),
+                MonitoringAlert(id: "posture.shoulders", title: "高低肩", message: "", seconds: 8, recovering: true, recoveryProgress: 0.6),
+                MonitoringAlert(id: "habit.mouth", title: "个人口唇示范变化", message: "", seconds: 8, recovering: true, recoveryProgress: 1)
+            ] : [MonitoringAlert(id: "posture.head", title: "歪头", message: "头向左扶正", seconds: 8, recovering: false)]
+            let ids = Set(alerts.map(\.id))
+            desktop.reminders.synchronize(alerts, recovered: false, ongoingIDs: ids)
             desktop.reminders.showReviewWindow()
             for step in 1...50 {
                 schedule(Double(step)*0.4) {
-                    desktop.reminders.synchronize([alert], recovered: false, ongoingIDs: [alert.id])
+                    desktop.reminders.synchronize(alerts, recovered: false, ongoingIDs: ids)
                     self.record("click-\(step)", model: model, desktop: desktop)
                     self.writeReport(["input":"synthetic clickable banner; no camera", "snapshots":self.smokeLog,
                         "focusPreserved":desktop.reminders.focusPreserved], flag:"--smoke-report=")

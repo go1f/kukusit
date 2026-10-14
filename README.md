@@ -4,7 +4,7 @@
 
 ## 安装
 
-从 [GitHub Release v0.9.0](https://github.com/go1f/kukusit/releases/tag/v0.9.0) 下载 `Kukusit-0.9.0-macOS-arm64.dmg`，打开 DMG 后把 `Kukusit.app` 拖到 Applications。也提供 ZIP。安装后可从“应用程序”、Spotlight 或 Dock 启动，菜单栏入口继续保留。
+从 [GitHub Release v0.9.1](https://github.com/go1f/kukusit/releases/tag/v0.9.1) 下载 `Kukusit-0.9.1-macOS-arm64.dmg`，打开 DMG 后把 `Kukusit.app` 拖到 Applications。也提供 ZIP。安装后可从“应用程序”、Spotlight 或 Dock 启动，菜单栏入口继续保留。
 
 发行包包含原生界面、本地 MediaPipe 推理运行时和模型，**无需安装 Python、无需克隆项目，也不需要联网推理**。目标为 Apple Silicon Mac，包括 M5 / macOS 27；当前已在 M2 / macOS 27 验证，尚未在 M5 实机测试。
 
@@ -63,6 +63,7 @@ release/Kukusit.app/Contents/MacOS/PostureDiagnostics --bridge-check
 
 ## 文档
 
+- [v0.9.1 恢复绿灯完整显示修复](docs/release-v0.9.1.md)
 - [v0.9.0 紧凑提示、点击收起与单屏灵动岛效果](docs/release-v0.9.0.md)
 - [v0.8.0 绿灯恢复、解锁续监测、画中画记忆与空格控制](docs/release-v0.8.0.md)
 - [v0.7.0 原生自动检查与更新](docs/release-v0.7.0.md)

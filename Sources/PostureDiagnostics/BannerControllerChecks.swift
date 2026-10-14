@@ -44,6 +44,16 @@ import PostureCore
             require((reminders.snapshot["panelHeight"] as? CGFloat ?? 0) >= 57, "stacked rows must fit")
             require(reminders.focusPreserved, "panel changed keyboard focus")
             checks.append("confirmed recovery permits a fresh episode; stacked layout preserves focus")
+
+            reminders.synchronize([recovering], recovered: false, ongoingIDs: [head.id])
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            require((reminders.snapshot["panelHeight"] as? CGFloat ?? 0) >= 40, "recovery lights need full vertical space")
+            let longTitle = MonitoringAlert(id: shoulder.id, title: "个人口唇示范变化", message: "", seconds: 8,
+                recovering: true, recoveryProgress: 1)
+            reminders.synchronize([recovering, longTitle], recovered: false, ongoingIDs: ids)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            require((reminders.snapshot["panelHeight"] as? CGFloat ?? 0) >= 67, "stacked recovery rows must fit")
+            checks.append("single and stacked recovery lights reserve full height")
             reminders.hide()
             try? await Task.sleep(nanoseconds: 300_000_000)
             let report: [String: Any] = ["passed": true, "input": "synthetic alerts; no camera or user preferences", "checks": checks]
