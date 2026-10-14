@@ -9,7 +9,7 @@
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>Kukusit.icns</string>
     <key>CFBundleShortVersionString</key><string>0.9.1</string>
-    <key>CFBundleVersion</key><string>16</string>
+    <key>CFBundleVersion</key><string>17</string>
     <key>LSUIElement</key><false/>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>

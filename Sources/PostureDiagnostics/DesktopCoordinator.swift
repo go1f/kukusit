@@ -29,9 +29,7 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         super.init()
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem = item
-        let statusImage = Bundle.main.url(forResource: "StatusIcon", withExtension: "svg")
-            .flatMap { NSImage(contentsOf: $0) }
-            ?? NSImage(systemSymbolName: "figure.seated.side", accessibilityDescription: "坐姿监测")
+        let statusImage = NSImage(systemSymbolName: "figure.seated.side", accessibilityDescription: "坐姿监测")
         statusImage?.size = NSSize(width: 20, height: 20)
         statusImage?.accessibilityDescription = "坐姿监测"
         item.button?.image = statusImage

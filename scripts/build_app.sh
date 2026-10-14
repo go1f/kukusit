@@ -23,7 +23,9 @@ for appearance in Light Dark; do
   swift "$project_root/scripts/build_icons.swift" "$project_root/App/Assets/AppIcon.png" "$variant_iconset" "${appearance:l}"
   iconutil -c icns "$variant_iconset" -o "$app_path/Contents/Resources/Kukusit${appearance}.icns"
 done
-cp "$project_root/App/Assets/StatusIcon.svg" "$app_path/Contents/Resources/StatusIcon.svg"
+cp "$project_root/App/Assets/SeatedMascot.svg" "$app_path/Contents/Resources/SeatedMascot.svg"
+# Discard the superseded generated menu icon; the mascot is now an opt-in easter egg.
+rm -f "$app_path/Contents/Resources/StatusIcon.svg"
 if [[ -f "$project_root/.local/pose-backend.json" ]]; then
   cp "$project_root/.local/pose-backend.json" "$app_path/Contents/Resources/pose-backend.json"
   cp "$project_root/pose-worker/pose_worker.py" "$app_path/Contents/Resources/pose_worker.py"

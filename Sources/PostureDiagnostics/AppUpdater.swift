@@ -19,6 +19,7 @@ final class AppUpdater: NSObject, ObservableObject, NSMenuItemValidation {
     private var timer: Timer?
     private var task: Task<Void, Never>?
     private var updateWindow: NSWindow?
+    private var mascotWindow: NSWindow?
     private var downloadedWorkspace: URL?
     let enabled: Bool
 
@@ -178,6 +179,16 @@ final class AppUpdater: NSObject, ObservableObject, NSMenuItemValidation {
             NSApplication.shared.terminate(nil)
         } catch { message = "安装未启动：\(error.localizedDescription)" }
     }
+    fileprivate func showMascot() {
+        if mascotWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 180),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = "偶遇小兽"; window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: MascotEasterEggView())
+            window.center(); mascotWindow = window
+        }
+        NSApplication.shared.activate(ignoringOtherApps: true); mascotWindow?.makeKeyAndOrderFront(nil)
+    }
     private func showWindow() {
         if updateWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 560),
@@ -196,6 +207,9 @@ struct AppUpdateSettingsView: View {
         Form {
             Section("Kukusit") {
                 Text("版本 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")")
+                    .contextMenu {
+                        Button("和小兽打个招呼", action: updater.showMascot)
+                    }
                 Toggle("自动检查新版本", isOn: Binding(get: { updater.automaticallyChecks }, set: updater.setAutomaticChecks))
                     .disabled(!updater.enabled)
                 Text("每天在后台检查，不自动安装，也不会上传摄像头画面、校准数据或口部示范。")
@@ -222,5 +236,19 @@ struct AppUpdateSettingsView: View {
                 Link("查看 GitHub 发布记录", destination: URL(string: "https://github.com/go1f/kukusit/releases")!)
             }
         }.formStyle(.grouped)
+    }
+}
+
+private struct MascotEasterEggView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            if let url = Bundle.main.url(forResource: "SeatedMascot", withExtension: "svg"),
+               let image = NSImage(contentsOf: url) {
+                Image(nsImage: image).renderingMode(.template).resizable().scaledToFit()
+                    .frame(width: 76, height: 76)
+                    .accessibilityLabel("坐姿小兽")
+            }
+            Text("起来活动一下吧。").font(.callout)
+        }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
