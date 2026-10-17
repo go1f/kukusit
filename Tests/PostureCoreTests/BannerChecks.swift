@@ -4,23 +4,25 @@ import PostureCore
 
 struct BannerChecks {
     func trackingDropout() {
-        var s = ReminderDismissal(); s.dismiss(["head"])
-        s.reconcile(ongoingIDs: ["head"])
-        expectFalse(s.allows("head"))
+        var s = ReminderDismissal(); s.dismiss(["head"], at: 0)
+        s.reconcile(ongoingIDs: ["head"], at: 1)
+        expectFalse(s.allows("head", at: 1))
         // Observable alert rows can disappear, while the episode remains unresolved.
-        s.reconcile(ongoingIDs: ["head"]); expectFalse(s.allows("head"))
+        s.reconcile(ongoingIDs: ["head"], at: 2); expectFalse(s.allows("head", at: 2))
     }
     func independentAnomaly() {
-        var s = ReminderDismissal(); s.dismiss(["head"])
-        s.reconcile(ongoingIDs: ["head", "shoulders"])
-        expectTrue(s.allows("shoulders")); expectFalse(s.allows("head"))
-        s.dismiss(["shoulders"]); expectFalse(s.allows("shoulders"))
+        var s = ReminderDismissal(); s.dismiss(["head"], at: 10)
+        s.reconcile(ongoingIDs: ["head", "shoulders"], at: 11)
+        expectFalse(s.allows("shoulders", at: 11)); expectFalse(s.allows("head", at: 39.999))
+        s.reconcile(ongoingIDs: ["head", "shoulders"], at: 40)
+        expectTrue(s.allows("head", at: 40)); expectTrue(s.allows("shoulders", at: 40))
     }
     func recoveryAndReset() {
-        var s = ReminderDismissal(); s.dismiss(["head", "shoulders"])
-        s.reconcile(ongoingIDs: ["shoulders"])
-        expectTrue(s.allows("head")); expectFalse(s.allows("shoulders"))
-        s.reconcile(ongoingIDs: []); expectTrue(s.acknowledged.isEmpty)
+        var s = ReminderDismissal(); s.dismiss(["head", "shoulders"], at: 10)
+        s.reconcile(ongoingIDs: [], at: 11)
+        expectTrue(s.acknowledged.isEmpty); expectFalse(s.allows("head", at: 39))
+        s.dismiss([], at: 20)
+        expectFalse(s.allows("nudge", at: 49.999)); expectTrue(s.allows("head", at: 50))
     }
     let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
     let visible = CGRect(x: 0, y: 40, width: 1440, height: 828)

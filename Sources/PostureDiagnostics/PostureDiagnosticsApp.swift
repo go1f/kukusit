@@ -22,11 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if args.contains("--banner-review"), demo {
             model.onReminderAlertsChanged = nil
             desktop.hideMain()
-            let lights = args.contains("--lights-layout-review")
-            let alerts = lights ? [
-                MonitoringAlert(id: "posture.head", title: "歪头", message: "", seconds: 8, recovering: true, recoveryProgress: 1),
-                MonitoringAlert(id: "posture.shoulders", title: "高低肩", message: "", seconds: 8, recovering: true, recoveryProgress: 0.6),
-                MonitoringAlert(id: "habit.mouth", title: "个人口唇示范变化", message: "", seconds: 8, recovering: true, recoveryProgress: 1)
+            let rings = args.contains("--ring-layout-review")
+            let alerts = rings ? [
+                MonitoringAlert(id: "posture.head", title: "歪头", message: "头向左扶正", seconds: 8, recovering: true, recoveryProgress: 1),
+                MonitoringAlert(id: "posture.shoulders", title: "高低肩", message: "双肩放平", seconds: 8, recovering: true, recoveryProgress: 0.6),
+                MonitoringAlert(id: "habit.mouth", title: "口部变化", message: "放松嘴唇", seconds: 8, recovering: true, recoveryProgress: 1)
             ] : [MonitoringAlert(id: "posture.head", title: "歪头", message: "头向左扶正", seconds: 8, recovering: false)]
             let ids = Set(alerts.map(\.id))
             desktop.reminders.synchronize(alerts, recovered: false, ongoingIDs: ids)
@@ -46,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model.demoScenario = .headTilt
             schedule(4) { model.demoScenario = .clear }
             for (index, seconds) in [4.3, 5.5, 7.5, 9.3, 10.7, 12.0].enumerated() {
-                schedule(seconds) { self.record("lights-\(index)", model: model, desktop: desktop) }
+                schedule(seconds) { self.record("ring-\(index)", model: model, desktop: desktop) }
             }
             schedule(13) {
                 self.writeReport(["input": "synthetic recovery animation; no camera", "snapshots": self.smokeLog,
@@ -139,6 +139,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 enum PostureDiagnosticsApp {
     @MainActor static func main() {
+        if let index = CommandLine.arguments.firstIndex(of: "--presentation-check"), CommandLine.arguments.count > index+1 {
+            PresentationChecks.run(directory: CommandLine.arguments[index+1]); return
+        }
+        if CommandLine.arguments.contains("--dual-preview-check") { PresentationChecks.cameraConnections(); return }
         if CommandLine.arguments.contains("--banner-check") { BannerControllerChecks.run(); return }
         if let index = CommandLine.arguments.firstIndex(of: "--update-manifest-check"), CommandLine.arguments.count > index+2 {
             UpdateDiagnostics.check(manifest: CommandLine.arguments[index+1], archive: CommandLine.arguments[index+2])

@@ -1,14 +1,23 @@
 import Foundation
 import CoreGraphics
 
-/// A click acknowledges the current episodes, including episodes temporarily
-/// hidden by poor tracking. New abnormality types can still be presented.
+/// A user dismissal silences every reminder for 30 monotonic seconds, even if
+/// the current episode recovers or a different abnormality appears meanwhile.
 public struct ReminderDismissal: Sendable {
     public private(set) var acknowledged: Set<String> = []
+    public private(set) var mutedUntil: Double?
     public init() {}
-    public mutating func reconcile(ongoingIDs: Set<String>) { acknowledged.formIntersection(ongoingIDs) }
-    public mutating func dismiss(_ ids: Set<String>) { acknowledged.formUnion(ids) }
-    public func allows(_ id: String) -> Bool { !acknowledged.contains(id) }
+    public mutating func reconcile(ongoingIDs: Set<String>, at timestamp: Double = ProcessInfo.processInfo.systemUptime) {
+        if let mutedUntil, timestamp >= mutedUntil { self.mutedUntil = nil; acknowledged = [] }
+        else { acknowledged.formIntersection(ongoingIDs) }
+    }
+    public mutating func dismiss(_ ids: Set<String>, at timestamp: Double = ProcessInfo.processInfo.systemUptime) {
+        acknowledged.formUnion(ids)
+        mutedUntil = max(mutedUntil ?? timestamp, timestamp + 30)
+    }
+    public func allows(_ id: String, at timestamp: Double = ProcessInfo.processInfo.systemUptime) -> Bool {
+        mutedUntil.map { timestamp >= $0 } ?? true
+    }
 }
 
 public enum ReminderPlacement {

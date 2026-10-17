@@ -2,49 +2,6 @@ import SwiftUI
 import AppKit
 import PostureCore
 
-struct MonitorPopover: View {
-    @ObservedObject var model: DiagnosticModel
-    @ObservedObject var desktop: DesktopCoordinator
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("坐姿监测", systemImage: "figure.seated.side").font(.headline)
-                Spacer()
-                Button { desktop.showSettings() } label: { Image(systemName: "gearshape") }
-                    .buttonStyle(.borderless).help("设置").accessibilityLabel("设置")
-            }
-            Text(model.monitorSummary).font(.callout).foregroundStyle(.secondary)
-            if let detail = model.monitorDetail { Text(detail).font(.caption).foregroundStyle(.secondary) }
-            Button { desktop.showMain(expandPreview: true) } label: { Label("打开监控窗口", systemImage: "video") }
-                .buttonStyle(.borderedProminent).frame(maxWidth: .infinity)
-            HStack {
-                Button(model.hasStarted ? "暂停监测" : "开始监测") { model.hasStarted ? model.pause() : model.start() }
-                Button(desktop.pipVisible ? "收起画中画" : "画中画") { desktop.togglePiP() }
-            }
-            if let update = desktop.updater.available {
-                Button("新版本 \(update.version) 可更新") { desktop.updater.checkForUpdates() }
-            }
-            Divider()
-            Picker("校准情境", selection: $model.selectedContext) {
-                ForEach(ViewingContext.allCases) { Text($0.label).tag($0) }
-            }.disabled(model.calibrationProgress != nil)
-            if let progress = model.calibrationProgress {
-                ProgressView(value: progress)
-                Button("取消校准") { model.cancelCalibration() }
-            } else {
-                Button(model.profile == nil ? "校准 20 秒" : "重新校准") { model.beginCalibration() }.disabled(!model.canCalibrate)
-            }
-            HStack {
-                Text("仅在本机处理").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("检查更新…") { desktop.updater.checkForUpdates() }.font(.caption).disabled(!desktop.updater.canCheck)
-                Button("退出") { NSApplication.shared.terminate(nil) }.font(.caption)
-            }
-        }.padding(14).frame(width: 300).fixedSize(horizontal: false, vertical: true)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-    }
-}
-
 struct PiPView: View {
     @ObservedObject var model: DiagnosticModel
     @ObservedObject var desktop: DesktopCoordinator
@@ -77,7 +34,7 @@ struct PiPView: View {
                 Divider().frame(height: 36)
                 value("肩线偏移", model.shoulderDeviation)
                 Spacer(minLength: 0)
-                Button { model.hasStarted ? model.pause() : model.start() } label: {
+                Button { model.toggleMonitoring() } label: {
                     Image(systemName: model.hasStarted ? "pause.fill" : "play.fill")
                 }.buttonStyle(.bordered).help((model.hasStarted ? "暂停监测" : "开始监测") + "（聚焦后可按空格）")
                     .accessibilityLabel(model.hasStarted ? "暂停监测" : "开始监测")

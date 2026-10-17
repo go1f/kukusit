@@ -9,7 +9,7 @@ enum DiagnosticsChecks {
         do {
             let legacy = Data(#"{"sustainedSeconds":25,"cooldownSeconds":180,"pipOnTop":false,"pipSize":"large","pipScreenID":"office","resumeOnLaunch":false}"#.utf8)
             let restored = try JSONDecoder().decode(MonitorSettings.self, from: legacy)
-            precondition(!MonitorSettings().mirrored && !restored.mirrored)
+            precondition(!MonitorSettings().mirrored && !restored.mirrored && !restored.dualPreview)
             let mirroredPreference = try JSONDecoder().decode(MonitorSettings.self, from: Data(#"{"mirrored":true}"#.utf8))
             precondition(mirroredPreference.mirrored)
             precondition(restored.tuning.sustainedSeconds == 5 && restored.tuning.headEnterDegrees == 3)
@@ -17,6 +17,7 @@ enum DiagnosticsChecks {
             var customized = restored
             customized.tuning.sustainedSeconds = 1.5; customized.tuning.headEnterDegrees = 2
             customized.tuning.computePreference = .neuralEngine; customized.bodyBackend = .appleVision
+            customized.dualPreview = true
             let copy = try JSONDecoder().decode(MonitorSettings.self, from: JSONEncoder().encode(customized))
             precondition(copy == customized)
             customized.pipPlacement = FloatingWindowPlacement(displayID: "external", frame: CGRect(x: -800, y: 250, width: 440, height: 340),
@@ -30,6 +31,7 @@ enum DiagnosticsChecks {
             defer { defaults.removePersistentDomain(forName: suite) }
             for mirrored in [true, false, true, false] {
                 customized.mirrored = mirrored
+                customized.dualPreview = !mirrored
                 customized.save(defaults: defaults)
                 precondition(MonitorSettings.load(defaults: UserDefaults(suiteName: suite)!) == customized)
             }

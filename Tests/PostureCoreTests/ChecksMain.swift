@@ -148,8 +148,8 @@ struct ChecksMain {
             ("PiP negative-coordinate placement", sessions.placementRoundtrip),
             ("PiP changed resolution stays on screen", sessions.placementBounds),
             ("dismissed reminder survives tracking dropout", banners.trackingDropout),
-            ("new anomaly is not suppressed", banners.independentAnomaly),
-            ("recovered episode can remind again", banners.recoveryAndReset),
+            ("new anomalies respect 30-second global mute", banners.independentAnomaly),
+            ("recovery cannot reset click quiet period", banners.recoveryAndReset),
             ("single-screen island respects cutout", banners.notchedPlacement),
             ("non-notched single screen moves above old banner", banners.flatPlacement),
             ("multi-screen reminder stays below menu", banners.multiScreenPlacement)

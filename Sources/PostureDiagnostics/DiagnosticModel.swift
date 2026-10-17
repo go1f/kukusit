@@ -39,7 +39,7 @@ final class DiagnosticModel: ObservableObject {
     @Published private(set) var habitStates: [HabitState] = []
     let oralSamples: OralSampleStore
     private var habitsReliable = false
-    private var recoveryConfirmed = false
+    private var pendingRecoveredIDs: Set<String> = []
     @Published private var monitoringBaseline: Calibration?
     @Published var reminderCount = 0
     private(set) var judgmentSampleCounts: [String: Int] = [:]
@@ -59,13 +59,13 @@ final class DiagnosticModel: ObservableObject {
                 || oldValue.experimentalFaceMonitoring != settings.experimentalFaceMonitoring
                 || oldValue.mouthShiftMonitoring != settings.mouthShiftMonitoring
                 || oldValue.oralPoseMonitoring != settings.oralPoseMonitoring {
-                habitEngine.reset(); habitStates = []; habitsReliable = false; recoveryConfirmed = false
+                habitEngine.reset(); habitStates = []; habitsReliable = false
             }
             refreshReminderPresentation()
         }
     }
     var onReminderEvent: ((ReminderEvent) -> Void)?
-    var onReminderAlertsChanged: (([MonitoringAlert], Bool, Set<String>) -> Void)?
+    var onReminderAlertsChanged: ((ReminderPresentationUpdate) -> Void)?
     var onSettingsChanged: ((MonitorSettings, MonitorSettings) -> Void)?
     var onWindowClosed: (() -> Void)?
     private var reminderEngine = ReminderEngine()
@@ -262,7 +262,7 @@ final class DiagnosticModel: ObservableObject {
         return Geometry.wrapDegrees(value - baseline.median, period: 180)
     }
 
-    func toggleMonitoringFromKeyboard() {
+    func toggleMonitoring() {
         if isDemo {
             if demoPaused { startDemo() }
             else {
@@ -418,7 +418,7 @@ final class DiagnosticModel: ObservableObject {
         if settings.automaticReminders, collector == nil, !oralSamples.isRecording,
            settings.handMouthMonitoring || settings.experimentalLipMonitoring || settings.experimentalFaceMonitoring
                 || settings.mouthShiftMonitoring || settings.oralPoseMonitoring {
-            let previousConfirmed = habitStates.filter(\.confirmed)
+            let previousConfirmed = Set(habitStates.filter(\.confirmed).map(\.kind))
             let result = habitEngine.observeDetailed(packet.observation, metrics: evaluated,
                 reference: oralSamples.library(context: monitoringBaseline?.context ?? selectedContext,
                     signature: packet.observation.cameraSignature)?.reference ?? monitoringBaseline?.facialReference,
@@ -428,7 +428,10 @@ final class DiagnosticModel: ObservableObject {
                 examples: currentOralExamples,
                 mouthShift: settings.mouthShiftMonitoring)
             habitStates = result.states; habitsReliable = result.reliable
-            if result.reliable && !previousConfirmed.isEmpty && result.confirmedStates.isEmpty { recoveryConfirmed = true }
+            if result.reliable {
+                let currentConfirmed = Set(result.states.filter(\.confirmed).map(\.kind))
+                pendingRecoveredIDs.formUnion(previousConfirmed.subtracting(currentConfirmed).map { "habit." + $0.rawValue })
+            }
             habitSummary = habitEngine.summary
         } else {
             habitEngine.reset(); habitStates = []; habitsReliable = false
@@ -544,11 +547,11 @@ final class DiagnosticModel: ObservableObject {
         } catch { notice = "参数文件无法读取：\(error.localizedDescription)" }
     }
     private func applyReminderResult(_ result: ReminderResult) {
+        pendingRecoveredIDs.formUnion(ReminderPresentationUpdate.recoveredPostureIDs(previous: postureChannels, current: result.channels))
         if monitorState != result.state { monitorState = result.state }
         postureChannels = result.channels
         for event in result.events {
             if case .correction = event { reminderCount += 1 }
-            if case .recovered = event { recoveryConfirmed = true }
         }
     }
     private func refreshReminderPresentation() {
@@ -572,20 +575,17 @@ final class DiagnosticModel: ObservableObject {
                 }
             }
         }
-        let oralEnabled = settings.handMouthMonitoring || settings.experimentalLipMonitoring || settings.experimentalFaceMonitoring
-            || settings.mouthShiftMonitoring || settings.oralPoseMonitoring
-        let recoveredSafely = recoveryConfirmed && !postureChannels.contains(where: \.isUnresolved)
-            && habitStates.isEmpty && (!oralEnabled || habitsReliable)
-            && postureChannels.first(where: { $0.channel == .head })?.isObservable == true
         var ongoingIDs: Set<String> = []
-        if hasStarted && settings.automaticReminders && collector == nil && !oralSamples.isRecording {
+        let enabled = hasStarted && settings.automaticReminders && collector == nil && !oralSamples.isRecording
+        if enabled {
             for channel in postureChannels where channel.hasReminded && channel.isUnresolved {
                 ongoingIDs.insert("posture." + channel.channel.rawValue)
             }
             for state in habitStates where state.confirmed { ongoingIDs.insert("habit." + state.kind.rawValue) }
         }
-        onReminderAlertsChanged?(alerts, recoveredSafely, ongoingIDs)
-        recoveryConfirmed = false
+        onReminderAlertsChanged?(ReminderPresentationUpdate(alerts: alerts, ongoingIDs: ongoingIDs,
+            recoveredIDs: enabled ? pendingRecoveredIDs.subtracting(ongoingIDs) : [], enabled: enabled))
+        pendingRecoveredIDs = []
     }
     func beginOralRecording(action: OralPoseAction?) {
         guard canRecordOralPose, let signature = frame?.observation.cameraSignature else { return }
@@ -617,7 +617,7 @@ final class DiagnosticModel: ObservableObject {
     private func resetStats() {
         frameCount = 0; faceValidCount = 0; shoulderValidCount = 0
         firstVideoSeconds = nil; firstAnalysisSeconds = nil; nextJawCheck = nil; habitEngine.reset()
-        habitStates = []; habitsReliable = false; recoveryConfirmed = false
+        habitStates = []; habitsReliable = false
         cpuOrigin = processCPUSeconds(); averageAppCPU = 0
         judgmentSampleCounts = [:]
         analysisHz = 0; p95Milliseconds = 0; elapsedSeconds = 0

@@ -35,6 +35,7 @@ struct MonitorSettings: Codable, Equatable {
     var pipPlacement: FloatingWindowPlacement?
     var resumeOnLaunch = true
     var mirrored = false
+    var dualPreview = false
     var sustainedSeconds: Double { get { tuning.sustainedSeconds } set { tuning.sustainedSeconds = newValue } }
     var cooldownSeconds: Double { get { tuning.cooldownSeconds } set { tuning.cooldownSeconds = newValue } }
     var reminderConfiguration: ReminderConfiguration { tuning.reminderConfiguration }
@@ -42,7 +43,7 @@ struct MonitorSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, tuning, automaticReminders, handMouthMonitoring, experimentalLipMonitoring,
              experimentalFaceMonitoring, mouthShiftMonitoring, oralPoseMonitoring, jawSelfCheck, bodyBackend, pipOnTop, pipShowsVideo, pipShowsSkeleton,
-             pipSize, pipCorner, pipScreenID, pipPlacement, resumeOnLaunch, mirrored
+             pipSize, pipCorner, pipScreenID, pipPlacement, resumeOnLaunch, mirrored, dualPreview
     }
     init(from decoder: Decoder) throws {
         self.init()
@@ -69,10 +70,11 @@ struct MonitorSettings: Codable, Equatable {
         // Older releases always saved this value, including their former true default.
         // Preserve saved choices; only a fresh or missing preference adopts the new default.
         mirrored = try c.decodeIfPresent(Bool.self, forKey: .mirrored) ?? false
+        dualPreview = try c.decodeIfPresent(Bool.self, forKey: .dualPreview) ?? false
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(4, forKey: .schemaVersion); try c.encode(tuning.normalized, forKey: .tuning)
+        try c.encode(5, forKey: .schemaVersion); try c.encode(tuning.normalized, forKey: .tuning)
         try c.encode(automaticReminders, forKey: .automaticReminders)
         try c.encode(handMouthMonitoring, forKey: .handMouthMonitoring)
         try c.encode(experimentalLipMonitoring, forKey: .experimentalLipMonitoring)
@@ -87,6 +89,7 @@ struct MonitorSettings: Codable, Equatable {
         try c.encodeIfPresent(pipPlacement, forKey: .pipPlacement)
         try c.encode(resumeOnLaunch, forKey: .resumeOnLaunch)
         try c.encode(mirrored, forKey: .mirrored)
+        try c.encode(dualPreview, forKey: .dualPreview)
     }
     static func load(defaults: UserDefaults = .standard) -> MonitorSettings {
         guard let data = defaults.data(forKey: "monitorSettingsV1"),

@@ -37,9 +37,7 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         item.button?.target = self; item.button?.action = #selector(togglePopover)
         item.button?.toolTip = "坐姿监测 · 点击查看状态，⌥点击切换画中画"
         model.onReminderEvent = { [weak self] event in self?.reminders.handle(event) }
-        model.onReminderAlertsChanged = { [weak self] alerts, recovered, ongoing in
-            self?.reminders.synchronize(alerts, recovered: recovered, ongoingIDs: ongoing)
-        }
+        model.onReminderAlertsChanged = { [weak self] update in self?.reminders.synchronize(update) }
         model.onSettingsChanged = { [weak self] old, new in
             guard let self else { return }
             if self.pipPanel == nil {
@@ -56,6 +54,7 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
             }
             self.pipPanel?.level = new.pipOnTop ? .floating : .normal
             self.updateRendering()
+            self.statusPanel.updateGeometry()
         }
         model.onWindowClosed = { [weak self] in self?.mainVisible = false; self?.updateRendering() }
         model.$previewExpanded.removeDuplicates().sink { [weak self] _ in
@@ -76,8 +75,6 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.objectWillChange.send()
-                self.statusItem?.length = self.updater.available == nil ? NSStatusItem.squareLength : 32
-                self.statusItem?.button?.title = self.updater.available == nil ? "" : "·"
                 self.statusPanel.updateGeometry()
             }
         }.store(in: &subscriptions)
@@ -91,7 +88,7 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
                       window.attachedSheet == nil, NSApplication.shared.modalWindow == nil,
                       RunLoop.current.currentMode != .eventTracking,
                       !((window.firstResponder as? NSTextView)?.isEditable ?? false) else { return false }
-                if !event.isARepeat { self.model.toggleMonitoringFromKeyboard() }
+                if !event.isARepeat { self.model.toggleMonitoring() }
                 return true
             }
             return consumed ? nil : event
@@ -125,7 +122,9 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "坐姿监测"
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: MonitorWindowView(model: model, desktop: self))
+            let host = NSHostingView(rootView: MonitorWindowView(model: model, desktop: self))
+            host.sizingOptions = []
+            window.contentView = host
             window.contentMinSize = NSSize(width: 720, height: 520)
             window.delegate = self
             window.center()
