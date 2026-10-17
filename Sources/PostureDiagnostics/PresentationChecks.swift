@@ -55,8 +55,10 @@ import PostureCore
                 try banner.renderReview(to: folder.appendingPathComponent("reminder-recovering.png"))
                 time = 2; banner.synchronize(ReminderPresentationUpdate(alerts: [], ongoingIDs: [], recoveredIDs: [head.id]))
                 try banner.renderReview(to: folder.appendingPathComponent("reminder-complete.png"))
+                time = 2.5; banner.synchronize(ReminderPresentationUpdate(alerts: [], ongoingIDs: []))
+                try banner.renderReview(to: folder.appendingPathComponent("reminder-checkmark.png"))
                 banner.synchronize(ReminderPresentationUpdate(alerts: [], ongoingIDs: [], enabled: false))
-                for name in ["reminder-active.png", "reminder-recovering.png", "reminder-complete.png"] {
+                for name in ["reminder-active.png", "reminder-recovering.png", "reminder-complete.png", "reminder-checkmark.png"] {
                     let image = NSBitmapImageRep(data: try Data(contentsOf: folder.appendingPathComponent(name)))!
                     precondition(image.colorAt(x: 0, y: 0)!.alphaComponent < 0.01, "Reminder corner became square")
                     precondition(image.colorAt(x: image.pixelsWide/2, y: image.pixelsHigh/2)!.alphaComponent > 0.99)
@@ -66,7 +68,7 @@ import PostureCore
                     "mirrorMenuPresent":true, "updateMenuAbsent":true, "menuSizes":menuSizes,
                     "roundedCornersPreservedAcrossRecovery":true,
                     "onlyVerifiedEpisodeTransitionsReportRecovery":true,
-                    "renders":["dual-preview.png","single-preview.png","reminder-active.png","reminder-recovering.png","reminder-complete.png"]]
+                    "renders":["dual-preview.png","single-preview.png","reminder-active.png","reminder-recovering.png","reminder-complete.png","reminder-checkmark.png"]]
                 let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted,.sortedKeys])
                 try data.write(to: folder.appendingPathComponent("checks.json"), options:.atomic)
                 print(String(data:data,encoding:.utf8)!)

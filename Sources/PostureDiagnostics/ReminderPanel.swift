@@ -35,20 +35,29 @@ private enum BannerLayout {
     static let chrome = indicator + gap + horizontalPadding * 2
 }
 
-private struct RecoveryRing: View {
+private struct RecoveryIndicator: View {
     let progress: Double
     let animates: Bool
+    let completed: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var value: Double { min(1, max(0, progress)) }
     var body: some View {
         ZStack {
-            Circle().stroke(Color.green.opacity(0.18), lineWidth: 2.5)
-            Circle().trim(from: 0, to: max(0.001, value))
-                .stroke(Color.green, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .animation(reduceMotion || !animates ? nil : .linear(duration: 0.22), value: value)
+            ZStack {
+                Circle().stroke(Color.green.opacity(0.18), lineWidth: 2.5)
+                Circle().trim(from: 0, to: max(0.001, value))
+                    .stroke(Color.green, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(reduceMotion || !animates ? nil : .linear(duration: 0.22), value: value)
+            }
+            .opacity(completed ? 0 : 1)
+            Image(systemName: "checkmark")
+                .font(.system(size: 15, weight: .semibold)).foregroundStyle(Color.green)
+                .opacity(completed ? 1 : 0)
+                .scaleEffect(reduceMotion || completed ? 1 : 0.8)
         }
         .padding(2).frame(width: BannerLayout.indicator, height: BannerLayout.indicator)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: completed)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(value >= 1 ? "已确认恢复" : "正在确认恢复")
         .accessibilityValue("\(Int(value * 100))%")
@@ -60,13 +69,13 @@ private struct BannerView: View {
     private var state: BannerPresentation { content.presentation }
     var body: some View {
         Button(action: content.dismiss) {
-            VStack(alignment: .leading, spacing: BannerLayout.rowGap) {
+            VStack(alignment: .center, spacing: BannerLayout.rowGap) {
                 if state.alerts.isEmpty { row(state.text, alert: nil) }
                 else { ForEach(state.alerts) { alert in row(alert.message, alert: alert) } }
             }
             .padding(.horizontal, BannerLayout.horizontalPadding)
             .padding(.vertical, BannerLayout.verticalPadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             .foregroundStyle(state.island ? Color.white : Color.primary)
             .background {
                 if state.island { Color.black }
@@ -85,16 +94,18 @@ private struct BannerView: View {
     private func row(_ text: String, alert: MonitoringAlert?) -> some View {
         HStack(spacing: BannerLayout.gap) {
             if let alert, alert.recovering || alert.resolved {
-                RecoveryRing(progress: alert.resolved ? 1 : alert.recoveryProgress, animates: alert.animateRecovery)
+                RecoveryIndicator(progress: alert.resolved ? 1 : alert.recoveryProgress,
+                    animates: alert.animateRecovery, completed: alert.showsRecoveryCheckmark)
             } else {
                 Image(systemName: "figure.seated.side").font(.system(size: 17, weight: .medium))
                     .foregroundStyle(state.island ? Color.white.opacity(0.85) : Color.accentColor)
                     .frame(width: BannerLayout.indicator, height: BannerLayout.indicator)
             }
             Text(text).font(.system(size: 13, weight: .medium))
+                .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 }
 
@@ -126,6 +137,7 @@ private struct BannerView: View {
     private var reviewWindow: NSWindow?
     private let trackingGrace = 2.0
     private let completionHold = 3.0
+    private let completionRingHold = 0.35
 
     init(router: DisplayRouter, now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }, presentsOnScreen: Bool = true) {
         self.router = router; self.now = now; self.presentsOnScreen = presentsOnScreen
@@ -174,6 +186,8 @@ private struct BannerView: View {
                     var completed = old; completed.resolved = true; completed.suspended = false
                     completed.recovering = true; completed.recoveryProgress = 1
                     completed.animateRecovery = true
+                    completed.showsRecoveryCheckmark = time >= start + completionRingHold
+                    if !completed.showsRecoveryCheckmark { deadlines.append(start + completionRingHold) }
                     rows.append(completed); deadlines.append(start + completionHold)
                     if !old.resolved { recoveryCount += 1 }
                 }
@@ -248,9 +262,7 @@ private struct BannerView: View {
         let area = screen.visibleFrame, font = NSFont.systemFont(ofSize: 13, weight: .medium)
         let rows = state.alerts.isEmpty ? [state.text] : state.alerts.map(\.message)
         let longest = rows.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 80
-        let left = screen.auxiliaryTopLeftArea ?? .zero, right = screen.auxiliaryTopRightArea ?? .zero
-        let cutoutWidth = single && !left.isEmpty && !right.isEmpty ? max(0, right.minX-left.maxX) : 0
-        let width = min(320, area.width-24, max(160, min(260, cutoutWidth+20), ceil(longest)+BannerLayout.chrome))
+        let width = min(320, area.width-24, max(100, ceil(longest)+BannerLayout.chrome))
         let textHeight = rows.reduce(CGFloat(0)) { total, text in
             total + max(BannerLayout.indicator, ceil((text as NSString).boundingRect(
                 with: NSSize(width: width-BannerLayout.chrome, height: 1000), options: [.usesLineFragmentOrigin, .usesFontLeading],
