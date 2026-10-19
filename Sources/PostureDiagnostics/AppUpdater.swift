@@ -5,10 +5,43 @@ import Foundation
 import CryptoKit
 import PostureCore
 
+enum AppUpdatePhase {
+    case idle, checking, downloading, verifying, installing
+    var label: String {
+        switch self {
+        case .idle: return ""
+        case .checking: return "正在检查新版本…"
+        case .downloading: return "正在下载安装包…"
+        case .verifying: return "正在校验安装包和应用签名…"
+        case .installing: return "正在安装并重新启动…"
+        }
+    }
+}
+struct UpdateDownloadProgress {
+    let received: Int64
+    let total: Int64
+    var fraction: Double { min(1, max(0, Double(received) / Double(max(1, total)))) }
+    var percent: Int { Int(fraction * 100) }
+    var sizes: String {
+        ByteCountFormatter.string(fromByteCount: received, countStyle: .file) + " / "
+            + ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
+    }
+}
+@MainActor struct AppUpdateOperations {
+    var check: () async throws -> UpdateManifest
+    var download: (URL, @escaping @Sendable (Int64) -> Void) async throws -> (URL, URLResponse)
+    var prepare: (URL, UpdateManifest, URL) async throws -> UpdateInstallPlan
+    var install: (UpdateInstallPlan) throws -> Void
+}
+
 @MainActor
 final class AppUpdater: NSObject, ObservableObject, NSMenuItemValidation {
     @Published private(set) var canCheck = false
-    @Published private(set) var busy = false
+    @Published private(set) var phase: AppUpdatePhase = .idle
+    @Published private(set) var downloadProgress: UpdateDownloadProgress?
+    @Published private(set) var cancellationRequested = false
+    var busy: Bool { phase != .idle }
+    var canCancel: Bool { busy && phase != .installing && !cancellationRequested }
     @Published private(set) var automaticallyChecks = true
     @Published private(set) var lastCheck: Date?
     @Published private(set) var message = "后台每天检查一次；发现新版后由你选择安装。"
@@ -16,6 +49,9 @@ final class AppUpdater: NSObject, ObservableObject, NSMenuItemValidation {
     @Published private(set) var readyPlan: UpdateInstallPlan?
     private let defaults: UserDefaults
     private let session: URLSession
+    private let operations: AppUpdateOperations
+    private var operationID: UUID?
+    private var lastProgressAt = -Double.infinity
     private var timer: Timer?
     private var task: Task<Void, Never>?
     private var updateWindow: NSWindow?
@@ -23,12 +59,24 @@ final class AppUpdater: NSObject, ObservableObject, NSMenuItemValidation {
     private var downloadedWorkspace: URL?
     let enabled: Bool
 
-    init(enabled: Bool, defaults: UserDefaults = .standard) {
+    init(enabled: Bool, defaults: UserDefaults = .standard, operations: AppUpdateOperations? = nil) {
         self.enabled = enabled; self.defaults = defaults
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30; configuration.timeoutIntervalForResource = 600
         configuration.urlCache = nil
-        session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: configuration)
+        self.session = session
+        self.operations = operations ?? AppUpdateOperations(
+            check: { try await Self.fetchManifest(session: session) },
+            download: { url, progress in
+                try await UpdateDownload.fetch(url, configuration: session.configuration, progress: progress)
+            },
+            prepare: { file, item, destination in
+                try await Task.detached(priority: .utility) {
+                    try Self.prepare(file: file, item: item, destination: destination)
+                }.value
+            },
+            install: { try Self.launchInstaller($0) })
         super.init()
         automaticallyChecks = defaults.object(forKey: "nativeUpdateAutomatic") as? Bool ?? true
         lastCheck = defaults.object(forKey: "nativeUpdateLastSuccess") as? Date
@@ -49,7 +97,19 @@ final class AppUpdater: NSObject, ObservableObject, NSMenuItemValidation {
         automaticallyChecks = enabled; defaults.set(enabled, forKey: "nativeUpdateAutomatic")
         if !enabled, busy, available == nil { cancel() }
     }
-    private func setBusy(_ value: Bool) { busy = value; canCheck = enabled && !value }
+    private func setPhase(_ phase: AppUpdatePhase) {
+        self.phase = phase; canCheck = enabled && !busy && readyPlan == nil
+    }
+    nonisolated private static func fetchManifest(session: URLSession) async throws -> UpdateManifest {
+        guard let urlText = Bundle.main.object(forInfoDictionaryKey: "KukusitUpdateFeedURL") as? String,
+              let url = URL(string: urlText), url.scheme == "https",
+              let keyText = Bundle.main.object(forInfoDictionaryKey: "KukusitUpdatePublicKey") as? String,
+              let key = Data(base64Encoded: keyText) else { throw UpdateFailure.invalidManifest }
+        let (data, response) = try await session.data(for: URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        try Task.checkCancellation()
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw UpdateFailure.process("暂时无法取得更新信息，请稍后再试。") }
+        return try UpdateManifest.verified(data, publicKey: key)
+    }
     private func checkIfDue() {
         guard automaticallyChecks, !busy else { return }
         let attempt = defaults.object(forKey: "nativeUpdateLastAttempt") as? Date ?? .distantPast
@@ -59,22 +119,16 @@ final class AppUpdater: NSObject, ObservableObject, NSMenuItemValidation {
         guard canCheck else { return }
         showWindow(); startCheck(manual: true)
     }
-    private func startCheck(manual: Bool) {
+    func startCheck(manual: Bool) {
         guard canCheck, readyPlan == nil else { return }
-        setBusy(true); message = "正在检查新版本…"
+        downloadProgress = nil; cancellationRequested = false; setPhase(.checking); message = phase.label
         defaults.set(Date(), forKey: "nativeUpdateLastAttempt")
         task = Task { [weak self] in
             guard let self else { return }
-            defer { self.setBusy(false); self.task = nil }
+            defer { self.setPhase(.idle); self.task = nil; self.cancellationRequested = false }
             do {
-                guard let urlText = Bundle.main.object(forInfoDictionaryKey: "KukusitUpdateFeedURL") as? String,
-                      let url = URL(string: urlText), url.scheme == "https",
-                      let keyText = Bundle.main.object(forInfoDictionaryKey: "KukusitUpdatePublicKey") as? String,
-                      let key = Data(base64Encoded: keyText) else { throw UpdateFailure.invalidManifest }
-                let (data, response) = try await session.data(for: URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+                let item = try await operations.check()
                 try Task.checkCancellation()
-                guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw UpdateFailure.process("暂时无法取得更新信息，请稍后再试。") }
-                let item = try UpdateManifest.verified(data, publicKey: key)
                 lastCheck = Date(); defaults.set(lastCheck, forKey: "nativeUpdateLastSuccess")
                 let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0") ?? 0
                 guard item.build > build else { available = nil; message = "当前已是最新版本。"; return }
@@ -94,34 +148,55 @@ final class AppUpdater: NSObject, ObservableObject, NSMenuItemValidation {
         defaults.set(item.build, forKey: "nativeUpdateSkippedBuild")
         if let plan = readyPlan { try? FileManager.default.removeItem(atPath: plan.workspace) }
         readyPlan = nil; downloadedWorkspace = nil; available = nil
-        message = "已跳过该版本；手动检查仍可查看。"
+        message = "已跳过该版本；手动检查仍可查看。"; setPhase(.idle)
     }
-    func cancel() { task?.cancel() }
+    func cancel() {
+        guard canCancel else { return }
+        cancellationRequested = true; message = "正在取消更新…"; task?.cancel()
+    }
+    private func recordProgress(_ received: Int64, total: Int64, operation: UUID) {
+        guard operationID == operation, phase == .downloading, !cancellationRequested,
+              received >= (downloadProgress?.received ?? 0) else { return }
+        let time = ProcessInfo.processInfo.systemUptime
+        guard time - lastProgressAt >= 0.1 || received >= total else { return }
+        lastProgressAt = time
+        downloadProgress = UpdateDownloadProgress(received: received, total: total)
+    }
     func downloadUpdate() {
         guard !busy, let item = available, readyPlan == nil else { return }
-        setBusy(true); message = "正在下载安装包（约 \(item.size/1_000_000) MB）…"
+        let operation = UUID(); operationID = operation; lastProgressAt = -Double.infinity
+        cancellationRequested = false
+        downloadProgress = UpdateDownloadProgress(received: 0, total: item.size)
+        setPhase(.downloading); message = "下载完成并通过校验后将自动安装、重新启动。"
         task = Task { [weak self] in
             guard let self else { return }
-            defer { self.setBusy(false); self.task = nil }
+            defer {
+                if self.phase != .installing { self.setPhase(.idle); self.downloadProgress = nil }
+                self.task = nil; self.operationID = nil; self.cancellationRequested = false
+            }
             var temporary: URL?
             do {
-                let (file, response) = try await session.download(from: URL(string: item.url)!)
+                let (file, response) = try await operations.download(URL(string: item.url)!) { [weak self] received in
+                    Task { @MainActor in self?.recordProgress(received, total: item.size, operation: operation) }
+                }
                 temporary = file
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw UpdateFailure.process("安装包下载失败，请稍后再试。") }
                 try Task.checkCancellation()
+                downloadProgress = UpdateDownloadProgress(received: item.size, total: item.size)
+                setPhase(.verifying); message = phase.label
                 let destination = Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath()
-                let plan = try await Task.detached(priority: .utility) {
-                    try Self.prepare(file: file, item: item, destination: destination)
-                }.value
+                let plan = try await operations.prepare(file, item, destination)
                 if Task.isCancelled {
                     try? FileManager.default.removeItem(atPath: plan.workspace); throw CancellationError()
                 }
                 downloadedWorkspace = URL(fileURLWithPath: plan.workspace); readyPlan = plan
-                message = "安装包和应用签名已验证。选择“安装并重新启动”后完成更新。"
-                try? FileManager.default.removeItem(at: file)
+                try? FileManager.default.removeItem(at: file); temporary = nil
+                try beginInstallation(plan)
             } catch {
                 if let temporary { try? FileManager.default.removeItem(at: temporary) }
-                message = Task.isCancelled ? "已取消，当前应用未改动。" : "下载或验证失败：\(error.localizedDescription)"
+                if phase == .installing { setPhase(.idle) }
+                message = Task.isCancelled ? "已取消，当前应用未改动。"
+                    : readyPlan != nil ? "安装未启动：\(error.localizedDescription)" : "下载或验证失败：\(error.localizedDescription)"
             }
         }
     }
@@ -164,20 +239,26 @@ final class AppUpdater: NSObject, ObservableObject, NSMenuItemValidation {
             statusFile: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("PostureDiagnostics/update-status.txt").path)
     }
+    private func beginInstallation(_ plan: UpdateInstallPlan) throws {
+        setPhase(.installing); message = phase.label
+        try operations.install(plan)
+    }
     func installAndRestart() {
         guard !busy, let plan = readyPlan else { return }
+        do { try beginInstallation(plan) }
+        catch { setPhase(.idle); message = "安装未启动：\(error.localizedDescription)" }
+    }
+    private static func launchInstaller(_ plan: UpdateInstallPlan) throws {
         let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/KukusitUpdateInstaller")
         guard FileManager.default.isExecutableFile(atPath: helper.path) else {
-            message = "安装助手缺失，请重新下载应用安装包。"; return
+            throw UpdateFailure.process("安装助手缺失，请重新下载应用安装包。")
         }
-        do {
-            let config = URL(fileURLWithPath: plan.workspace).appendingPathComponent("install.json")
-            try JSONEncoder().encode(plan).write(to: config, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.path)
-            let process = Process(); process.executableURL = helper; process.arguments = [config.path]
-            try process.run(); setBusy(true); message = "正在退出并安装更新…"
-            NSApplication.shared.terminate(nil)
-        } catch { message = "安装未启动：\(error.localizedDescription)" }
+        let config = URL(fileURLWithPath: plan.workspace).appendingPathComponent("install.json")
+        try JSONEncoder().encode(plan).write(to: config, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.path)
+        let process = Process(); process.executableURL = helper; process.arguments = [config.path]
+        try process.run()
+        NSApplication.shared.terminate(nil)
     }
     fileprivate func showMascot() {
         if mascotWindow == nil {
@@ -218,11 +299,32 @@ struct AppUpdateSettingsView: View {
                 if let item = updater.available {
                     Text("新版本 \(item.version)").font(.headline)
                     Text(item.notes).font(.caption).textSelection(.enabled)
-                    if updater.readyPlan == nil { Button("下载安装更新") { updater.downloadUpdate() }.disabled(updater.busy) }
-                    Button("跳过这个版本") { updater.skipVersion() }.disabled(updater.busy)
+                    if updater.readyPlan == nil, !updater.busy {
+                        Button("下载安装更新") { updater.downloadUpdate() }
+                        Text("点击后将下载、校验并自动安装，完成时会重新启动应用。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !updater.busy { Button("跳过这个版本") { updater.skipVersion() } }
                 }
-                if updater.readyPlan != nil { Button("安装并重新启动") { updater.installAndRestart() }.disabled(updater.busy) }
-                if updater.busy { ProgressView(); Button("取消") { updater.cancel() } }
+                if updater.readyPlan != nil, !updater.busy {
+                    Button("重试安装并重新启动") { updater.installAndRestart() }
+                }
+                if updater.phase == .downloading, let progress = updater.downloadProgress {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("正在下载安装包")
+                            Spacer()
+                            Text("\(progress.percent)%").monospacedDigit()
+                        }
+                        ProgressView(value: progress.fraction).progressViewStyle(.linear)
+                            .accessibilityLabel("安装包下载进度").accessibilityValue("\(progress.percent)%")
+                        Text(progress.sizes).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    }
+                } else if updater.busy { ProgressView(updater.phase.label) }
+                if updater.busy, updater.phase != .installing {
+                    Button(updater.cancellationRequested ? "正在取消…" : "取消更新") { updater.cancel() }
+                        .disabled(!updater.canCancel)
+                }
                 Text(updater.message).font(.callout).textSelection(.enabled)
                 if let date = updater.lastCheck {
                     Text("上次检查：\(date.formatted(date: .abbreviated, time: .shortened))")
@@ -230,7 +332,7 @@ struct AppUpdateSettingsView: View {
                 }
             }
             Section("安装与重新启动") {
-                Text("发现新版本后可以立即更新、稍后提醒或跳过该版本。安装时重新启动应用，镜像选择、敏感度、校准和个人示范都会保留。")
+                Text("发现新版本后可以立即更新、稍后提醒或跳过该版本。点击“下载安装更新”后无需再次确认，下载和校验通过即安装并重新启动。镜像选择、敏感度、校准和个人示范都会保留。")
                 Text("如果正从安装镜像中运行，请先把应用拖到“应用程序”。")
                     .font(.caption).foregroundStyle(.secondary)
                 Link("查看 GitHub 发布记录", destination: URL(string: "https://github.com/go1f/kukusit/releases")!)

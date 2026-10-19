@@ -20,10 +20,15 @@ private struct StatusMenuHeader: View {
     }
 }
 
+private final class StatusHeaderHostingView: NSHostingView<StatusMenuHeader> {
+    override var isOpaque: Bool { false }
+}
+
 @MainActor final class StatusPanelController: NSObject, NSMenuDelegate {
     private let menu = NSMenu(title: "坐姿监测")
     private let model: DiagnosticModel
     private unowned let desktop: DesktopCoordinator
+    private weak var statusItem: NSStatusItem?
     private let monitor = NSMenuItem(title: "开始监测", action: nil, keyEquivalent: "")
     private let pip = NSMenuItem(title: "画中画", action: nil, keyEquivalent: "")
     private let mirror = NSMenuItem(title: "镜像预览", action: nil, keyEquivalent: "")
@@ -35,8 +40,9 @@ private struct StatusMenuHeader: View {
         super.init()
         menu.delegate = self; menu.autoenablesItems = false; menu.minimumWidth = 300; menu.showsStateColumn = true
         let header = NSMenuItem(); header.isEnabled = false
-        let host = NSHostingView(rootView: StatusMenuHeader(model: model))
+        let host = StatusHeaderHostingView(rootView: StatusMenuHeader(model: model))
         host.sizingOptions = []; host.frame = NSRect(x: 0, y: 0, width: 300, height: 112)
+        host.wantsLayer = true; host.layer?.backgroundColor = NSColor.clear.cgColor
         header.view = host; menu.addItem(header); menu.addItem(.separator())
         let open = NSMenuItem(title: "打开监测窗口", action: #selector(DesktopCoordinator.openMain), keyEquivalent: "")
         open.target = desktop; menu.addItem(open)
@@ -59,11 +65,15 @@ private struct StatusMenuHeader: View {
         quit.target = NSApplication.shared; menu.addItem(quit)
         updateGeometry()
     }
+    func attach(to item: NSStatusItem) {
+        statusItem = item
+        // Native status-menu presentation supplies system glass, anchoring and keyboard tracking.
+        item.menu = menu
+    }
     func toggle(relativeTo button: NSStatusBarButton) {
         if visible { hide(); return }
         updateGeometry()
-        // AppKit owns anchoring, row highlighting and tracking. No floating panel is resized by status text.
-        menu.popUp(positioning: nil, at: NSPoint(x: button.bounds.minX, y: button.bounds.minY-4), in: button)
+        button.performClick(nil)
     }
     func updateGeometry() {
         monitor.title = model.hasStarted ? "暂停监测" : "开始监测"
@@ -78,6 +88,12 @@ private struct StatusMenuHeader: View {
     }
     func menuWillOpen(_ menu: NSMenu) { visible = true; updateGeometry() }
     func menuDidClose(_ menu: NSMenu) { visible = false }
+    func confinementRect(for menu: NSMenu, on screen: NSScreen?) -> NSRect {
+        guard let screen else { return .zero }
+        let area = screen.visibleFrame
+        let top = min(area.maxY, screen.frame.maxY - max(NSStatusBar.system.thickness, screen.safeAreaInsets.top)) - 4
+        return NSRect(x: area.minX, y: area.minY, width: area.width, height: max(0, top - area.minY))
+    }
     func hide() { menu.cancelTracking(); visible = false }
     @objc private func togglePiP() { desktop.togglePiP() }
     @objc private func toggleMonitoring() { model.toggleMonitoring() }
@@ -90,7 +106,9 @@ private struct StatusMenuHeader: View {
         model.selectedContext = context
     }
     var snapshot: [String: Any] {
-        ["visible": visible, "nativeMenu": true, "headerHeight": menu.items.first?.view?.frame.height ?? 0,
+        ["visible": visible, "nativeMenu": true, "systemAnchored": statusItem?.menu === menu,
+         "headerOpaque": menu.items.first?.view?.isOpaque ?? true,
+         "headerHeight": menu.items.first?.view?.frame.height ?? 0,
          "width": menu.size.width, "height": menu.size.height,
          "itemTitles": menu.items.filter { !$0.isSeparatorItem && $0.view == nil }.map(\.title),
          "mirrored": mirror.state == .on]

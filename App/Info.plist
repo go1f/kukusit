@@ -8,8 +8,8 @@
     <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>Kukusit.icns</string>
-    <key>CFBundleShortVersionString</key><string>0.10.1</string>
-    <key>CFBundleVersion</key><string>19</string>
+    <key>CFBundleShortVersionString</key><string>0.10.2</string>
+    <key>CFBundleVersion</key><string>20</string>
     <key>LSUIElement</key><false/>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>

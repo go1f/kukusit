@@ -18,6 +18,7 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
     private var lastPlacedFrame: NSRect?
     private var placementWork: DispatchWorkItem?
     private var spaceMonitor: Any?
+    private var statusClickMonitor: Any?
     private lazy var statusPanel = StatusPanelController(model: model, desktop: self)
     private var statusItem: NSStatusItem?
     private var subscriptions: Set<AnyCancellable> = []
@@ -34,8 +35,17 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         statusImage?.accessibilityDescription = "坐姿监测"
         item.button?.image = statusImage
         item.button?.image?.isTemplate = true
-        item.button?.target = self; item.button?.action = #selector(togglePopover)
+        statusPanel.attach(to: item)
         item.button?.toolTip = "坐姿监测 · 点击查看状态，⌥点击切换画中画"
+        statusClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            let consumed = MainActor.assumeIsolated {
+                guard let self, event.modifierFlags.contains(.option), let button = self.statusItem?.button,
+                      let window = button.window, event.window === window,
+                      button.bounds.contains(button.convert(event.locationInWindow, from: nil)) else { return false }
+                self.togglePiP(); return true
+            }
+            return consumed ? nil : event
+        }
         model.onReminderEvent = { [weak self] event in self?.reminders.handle(event) }
         model.onReminderAlertsChanged = { [weak self] update in self?.reminders.synchronize(update) }
         model.onSettingsChanged = { [weak self] old, new in
@@ -71,13 +81,6 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
             object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated {
                 self?.placementWork?.cancel(); self?.placementWork = nil; self?.placePiP()
             } }
-        updater.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.objectWillChange.send()
-                self.statusPanel.updateGeometry()
-            }
-        }.store(in: &subscriptions)
         installApplicationMenu()
         spaceMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             let consumed = MainActor.assumeIsolated {
@@ -242,6 +245,7 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
     func shutdown() {
         flushPiPPlacement(); placementWork?.cancel()
         if let spaceMonitor { NSEvent.removeMonitor(spaceMonitor) }
+        if let statusClickMonitor { NSEvent.removeMonitor(statusClickMonitor) }
         reminders.hide(); statusPanel.hide(); pipPanel?.orderOut(nil)
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
