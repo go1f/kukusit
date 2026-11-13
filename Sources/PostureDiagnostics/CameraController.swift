@@ -26,7 +26,7 @@ enum CameraStatus: Equatable {
         case .starting: return "启动 720p 采集；视频与识别分别处理。"
         case .running: return "图像仅在本机处理；持续偏离且识别稳定时才轻量提醒。"
         case .paused(let reason), .failed(let reason): return reason
-        case .denied: return "在系统设置 → 隐私与安全性 → 摄像头中开启 Kukusit，然后重新开始。"
+        case .denied: return "在系统设置 → 隐私与安全性 → 摄像头中开启 KukuSeat，然后重新开始。"
         }
     }
     var isActive: Bool {

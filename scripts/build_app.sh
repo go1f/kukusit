@@ -2,10 +2,10 @@
 set -euo pipefail
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_root"
-swift build -c release --build-system native --product PostureDiagnostics
-swift build -c release --build-system native --product KukusitUpdateInstaller
-binary_dir="$(swift build -c release --build-system native --show-bin-path)"
-app_path="$project_root/dist/PostureDiagnostics.app"
+swift build --scratch-path "${KUKUSEAT_BUILD_PATH:-.build}" -c release --build-system native --product PostureDiagnostics
+swift build --scratch-path "${KUKUSEAT_BUILD_PATH:-.build}" -c release --build-system native --product KukusitUpdateInstaller
+binary_dir="$(swift build --scratch-path "${KUKUSEAT_BUILD_PATH:-.build}" -c release --build-system native --show-bin-path)"
+app_path="$project_root/dist/KukuSeat.app"
 mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources"
 cp "$binary_dir/PostureDiagnostics" "$app_path/Contents/MacOS/PostureDiagnostics"
 # Discard the unused Sparkle framework from earlier development builds.
@@ -16,14 +16,16 @@ mkdir -p "$app_path/Contents/Helpers"
 cp "$binary_dir/KukusitUpdateInstaller" "$app_path/Contents/Helpers/KukusitUpdateInstaller"
 cp "$project_root/App/Info.plist" "$app_path/Contents/Info.plist"
 iconset_path="$project_root/.local/icons/Kukusit.iconset"
-swift "$project_root/scripts/build_icons.swift" "$project_root/App/Assets/AppIcon.png" "$iconset_path" light
+swift "$project_root/scripts/build_icons.swift" "$project_root/App/Assets/Companion.png" "$iconset_path" light
 iconutil -c icns "$iconset_path" -o "$app_path/Contents/Resources/Kukusit.icns"
 for appearance in Light Dark; do
   variant_iconset="$project_root/.local/icons/Kukusit${appearance}.iconset"
-  swift "$project_root/scripts/build_icons.swift" "$project_root/App/Assets/AppIcon.png" "$variant_iconset" "${appearance:l}"
+  swift "$project_root/scripts/build_icons.swift" "$project_root/App/Assets/Companion.png" "$variant_iconset" light
   iconutil -c icns "$variant_iconset" -o "$app_path/Contents/Resources/Kukusit${appearance}.icns"
 done
 cp "$project_root/App/Assets/SeatedMascot.svg" "$app_path/Contents/Resources/SeatedMascot.svg"
+cp "$project_root/App/Assets/Companion.png" "$app_path/Contents/Resources/Companion.png"
+cp "$project_root/App/Assets/StatusIcon.png" "$app_path/Contents/Resources/StatusIcon.png"
 # Discard the superseded generated menu icon; the mascot is now an opt-in easter egg.
 rm -f "$app_path/Contents/Resources/StatusIcon.svg"
 if [[ -f "$project_root/.local/pose-backend.json" ]]; then

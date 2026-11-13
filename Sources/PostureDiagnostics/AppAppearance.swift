@@ -33,7 +33,7 @@ final class AppAppearance {
     }
 
     private func updateIcon() {
-        let image = Self.usesDarkBackground(NSApplication.shared.effectiveAppearance) ? darkImage : lightImage
+        let image = lightImage // The reviewed application logo always has a white background.
         // A missing resource retains the bundle icon instead of a generic icon.
         if let image { NSApplication.shared.applicationIconImage = image }
     }

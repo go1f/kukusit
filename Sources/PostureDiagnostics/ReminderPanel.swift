@@ -12,13 +12,13 @@ final class PassivePanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-private struct BannerPresentation: Equatable {
+struct BannerPresentation: Equatable {
     var text = ""
     var alerts: [MonitoringAlert] = []
     var island = false
     var expanded = false
 }
-@MainActor private final class BannerContent: ObservableObject {
+@MainActor final class BannerContent: ObservableObject {
     @Published var presentation = BannerPresentation()
     var dismiss: () -> Void = {}
 }
@@ -110,6 +110,7 @@ private struct BannerView: View {
 }
 
 @MainActor final class ReminderPanelController {
+    private let pet = DesktopPetController()
     private let panel: PassivePanel
     private let content = BannerContent()
     private let router: DisplayRouter
@@ -148,6 +149,7 @@ private struct BannerView: View {
         panel.level = .floating; panel.hidesOnDeactivate = false; panel.ignoresMouseEvents = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         content.dismiss = { [weak self] in self?.dismissByUser() }
+        pet.onDismiss = { [weak self] in self?.dismissByUser() }
         let host = BannerHostingView(rootView: BannerView(content: content))
         host.sizingOptions = []
         host.wantsLayer = true; host.layer?.cornerRadius = BannerLayout.radius; host.layer?.masksToBounds = true
@@ -165,6 +167,7 @@ private struct BannerView: View {
     }
     func synchronize(_ update: ReminderPresentationUpdate) {
         latest = update; activeAlerts = update.alerts
+        pet.setEnabled(update.enabled && presentsOnScreen)
         lifecycleWork?.cancel(); lifecycleWork = nil
         let time = now()
         dismissal.reconcile(ongoingIDs: update.ongoingIDs, at: time)
@@ -214,6 +217,7 @@ private struct BannerView: View {
         var state = content.presentation; state.alerts = rows; state.text = ""
         if state != content.presentation { content.presentation = state }
         if visible { placePanel() } else { show() }
+        if presentsOnScreen { pet.present(rows, text: "") }
         if let deadline = deadlines.min() {
             let work = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated { guard let self else { return }; self.synchronize(self.latest) }
@@ -249,10 +253,12 @@ private struct BannerView: View {
         habitBanner = true
         var state = content.presentation; state.text = message; state.alerts = []; content.presentation = state
         show()
+        if presentsOnScreen { pet.setEnabled(true); pet.present([], text: message) }
         let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.habitBanner = false; self?.hide() } }
         nudgeWork = work; DispatchQueue.main.asyncAfter(deadline: .now()+4, execute: work)
     }
     private func placePanel() {
+        guard !presentsOnScreen else { return }
         guard let screen = router.workingScreen() else { return }
         lastScreenName = screen.localizedName
         let single = NSScreen.screens.count == 1 || CommandLine.arguments.contains("--banner-review")
@@ -290,18 +296,22 @@ private struct BannerView: View {
         token += 1; let current = token; lastShownAt = now()
         if !visible { panel.alphaValue = 0; content.presentation.expanded = false }
         placePanel(); visible = true; showCount += 1
-        if presentsOnScreen { panel.orderFrontRegardless() }
+        // The legacy offscreen panel retains diagnostic geometry only.
+        // Interactive presentation uses independent, tightly fitted pet/bubble panels.
         DispatchQueue.main.async { [weak self] in if self?.token == current { self?.content.presentation.expanded = true } }
         NSAnimationContext.runAnimationGroup { context in context.duration = 0.2; panel.animator().alphaValue = 1 }
         focusPreserved = focusPreserved && front == NSWorkspace.shared.frontmostApplication?.processIdentifier
             && key === NSApplication.shared.keyWindow && !panel.isKeyWindow
     }
     func hide() {
+        pet.hideBubbles()
         guard visible else { return }
         token += 1; let current = token; visible = false; content.presentation.expanded = false
         NSAnimationContext.runAnimationGroup({ context in context.duration = 0.25; panel.animator().alphaValue = 0 },
             completionHandler: { [weak self] in MainActor.assumeIsolated { if self?.token == current { self?.panel.orderOut(nil) } } })
     }
+    func togglePet() { pet.toggleVisibility() }
+    func shutdown() { hide(); pet.shutdown() }
     func showReviewWindow() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: max(320, episodeSize.width), height: max(90, episodeSize.height+24)),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -315,7 +325,7 @@ private struct BannerView: View {
         try NativeViewRender.png(BannerView(content: content), size: episodeSize, to: url)
     }
     var snapshot: [String: Any] {
-        ["windowID": panel.windowNumber, "visible": visible, "showCount": showCount, "recoveryCount": recoveryCount,
+        ["desktopPet": pet.snapshot, "windowID": panel.windowNumber, "visible": visible, "showCount": showCount, "recoveryCount": recoveryCount,
          "focusPreserved": focusPreserved, "canBecomeKey": panel.canBecomeKey, "ignoresMouseEvents": panel.ignoresMouseEvents,
          "screenName": lastScreenName, "persistent": !activeAlerts.isEmpty, "activeAlertIDs": activeAlerts.map(\.id),
          "alertCount": activeAlerts.count, "panelHeight": panel.frame.height, "panelWidth": panel.frame.width,

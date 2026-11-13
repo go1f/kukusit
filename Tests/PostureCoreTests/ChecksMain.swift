@@ -35,6 +35,7 @@ func expectThrowsError<T>(_ expression: @autoclosure () throws -> T, _ verify: (
 @main
 struct ChecksMain {
     static func main() throws {
+        try PetChecks().placement()
         let suite = PostureCoreTests()
         let reminders = ReminderChecks()
         let habits = TuningHabitChecks()

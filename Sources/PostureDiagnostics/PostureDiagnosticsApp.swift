@@ -139,6 +139,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 enum PostureDiagnosticsApp {
     @MainActor static func main() {
+        if let index = CommandLine.arguments.firstIndex(of: "--pet-render"), CommandLine.arguments.count > index+1 {
+            DesktopPetChecks.run(directory: CommandLine.arguments[index+1]); return
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--update-flow-check"), CommandLine.arguments.count > index+1,
            let url = URL(string: CommandLine.arguments[index+1]), url.scheme == "http", url.host == "127.0.0.1" {
             UpdateFlowChecks.run(server: url); return

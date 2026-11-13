@@ -11,10 +11,10 @@ if [[ ! -x .local/frozen/pose-worker/pose-worker || ! -f .local/frozen/source.sh
 fi
 # Sign only the completed portable bundle with the developer identity.
 KUKUSIT_SIGN_IDENTITY=- zsh scripts/build_app.sh
-release_app="$project_root/release/Kukusit.app"
+release_app="$project_root/release/KukuSeat.app"
 mkdir -p release
 if [[ -d "$release_app" ]]; then mv "$release_app" "$project_root/.local/previous-release-app-$(date +%s)"; fi
-ditto dist/PostureDiagnostics.app "$release_app"
+ditto dist/KukuSeat.app "$release_app"
 ditto .local/frozen/pose-worker "$release_app/Contents/Resources/PoseRuntime"
 .venv-pose/bin/python - <<'PY'
 from pathlib import Path
@@ -23,7 +23,7 @@ root=Path.cwd()
 config=json.loads((root/'.local/pose-backend.json').read_text())
 config.pop('pythonExecutable',None)
 config['bundledExecutable']='Contents/Resources/PoseRuntime/pose-worker'
-(root/'release/Kukusit.app/Contents/Resources/pose-backend.json').write_text(json.dumps(config,indent=2)+'\n')
+(root/'release/KukuSeat.app/Contents/Resources/pose-backend.json').write_text(json.dumps(config,indent=2)+'\n')
 PY
 cp THIRD_PARTY_NOTICES.md "$release_app/Contents/Resources/THIRD_PARTY_NOTICES.md"
 mkdir -p "$release_app/Contents/Resources/ThirdPartyLicenses/Python"
@@ -33,6 +33,9 @@ zsh scripts/sign_app.sh "$release_app"
 "$release_app/Contents/MacOS/PostureDiagnostics" --bridge-check
 version="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' App/Info.plist)"
 archive="release/Kukusit-${version}-macOS-arm64.zip"
-ditto -c -k --sequesterRsrc --keepParent "$release_app" "$archive"
+compatibility_stage="$(mktemp -d "$project_root/.local/update-stage.XXXXXX")"
+trap 'rm -rf "$compatibility_stage"' EXIT
+ditto "$release_app" "$compatibility_stage/Kukusit.app"
+ditto -c -k --sequesterRsrc --keepParent "$compatibility_stage/Kukusit.app" "$archive"
 (cd release && shasum -a 256 "$(basename "$archive")") > "${archive}.sha256"
 printf 'Portable app: %s\nArchive: %s\n' "$release_app" "$archive"

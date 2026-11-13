@@ -274,7 +274,7 @@ final class AppUpdater: NSObject, ObservableObject, NSMenuItemValidation {
         if updateWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 560),
                 styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-            window.title = "Kukusit 更新"; window.isReleasedWhenClosed = false
+            window.title = "KukuSeat 更新"; window.isReleasedWhenClosed = false
             window.contentView = NSHostingView(rootView: AppUpdateSettingsView(updater: self))
             window.center(); updateWindow = window
         }
@@ -286,7 +286,7 @@ struct AppUpdateSettingsView: View {
     @ObservedObject var updater: AppUpdater
     var body: some View {
         Form {
-            Section("Kukusit") {
+            Section("KukuSeat") {
                 Text("版本 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")")
                     .contextMenu {
                         Button("和小兽打个招呼", action: updater.showMascot)

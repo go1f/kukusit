@@ -6,7 +6,7 @@ private struct StatusMenuHeader: View {
     @ObservedObject var model: DiagnosticModel
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("坐姿监测").font(.headline).frame(height: 20, alignment: .leading)
+            Text("KukuSeat").font(.headline).frame(height: 20, alignment: .leading)
             Text(model.monitorSummary).font(.callout).foregroundStyle(.secondary)
                 .lineLimit(2, reservesSpace: true).frame(maxWidth: .infinity, alignment: .topLeading)
                 .frame(height: 34, alignment: .topLeading)
@@ -46,6 +46,8 @@ private final class StatusHeaderHostingView: NSHostingView<StatusMenuHeader> {
         header.view = host; menu.addItem(header); menu.addItem(.separator())
         let open = NSMenuItem(title: "打开监测窗口", action: #selector(DesktopCoordinator.openMain), keyEquivalent: "")
         open.target = desktop; menu.addItem(open)
+        let pet = NSMenuItem(title: "显示／隐藏小灰猫", action: #selector(DesktopCoordinator.togglePet), keyEquivalent: "")
+        pet.target = desktop; menu.addItem(pet)
         pip.target = self; pip.action = #selector(togglePiP); menu.addItem(pip)
         monitor.target = self; monitor.action = #selector(toggleMonitoring); menu.addItem(monitor)
         mirror.target = self; mirror.action = #selector(toggleMirror); menu.addItem(mirror)
@@ -61,7 +63,7 @@ private final class StatusHeaderHostingView: NSHostingView<StatusMenuHeader> {
         menu.addItem(.separator())
         let settings = NSMenuItem(title: "设置…", action: #selector(DesktopCoordinator.showSettings), keyEquivalent: "")
         settings.target = desktop; menu.addItem(settings)
-        let quit = NSMenuItem(title: "退出坐姿监测", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        let quit = NSMenuItem(title: "退出 KukuSeat", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
         quit.target = NSApplication.shared; menu.addItem(quit)
         updateGeometry()
     }

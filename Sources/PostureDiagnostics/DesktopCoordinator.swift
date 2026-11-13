@@ -30,11 +30,11 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         super.init()
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem = item
-        let statusImage = NSImage(systemSymbolName: "figure.seated.side", accessibilityDescription: "坐姿监测")
-        statusImage?.size = NSSize(width: 20, height: 20)
-        statusImage?.accessibilityDescription = "坐姿监测"
+        let statusImage = Bundle.main.url(forResource: "StatusIcon", withExtension: "png").flatMap(NSImage.init(contentsOf:))
+        statusImage?.size = NSSize(width: 22, height: 22)
+        statusImage?.isTemplate = false
+        statusImage?.accessibilityDescription = "KukuSeat 坐姿监测"
         item.button?.image = statusImage
-        item.button?.image?.isTemplate = true
         statusPanel.attach(to: item)
         item.button?.toolTip = "坐姿监测 · 点击查看状态，⌥点击切换画中画"
         statusClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
@@ -123,7 +123,7 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         if mainWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 690),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            window.title = "坐姿监测"
+            window.title = "KukuSeat"
             window.isReleasedWhenClosed = false
             let host = NSHostingView(rootView: MonitorWindowView(model: model, desktop: self))
             host.sizingOptions = []
@@ -241,19 +241,20 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         model.setRendering(image: full || (pipVisible && model.settings.pipShowsVideo),
                            skeleton: full || (pipVisible && model.settings.pipShowsSkeleton))
     }
+    @objc func togglePet() { reminders.togglePet() }
     func previewReminder() { reminders.preview() }
     func shutdown() {
         flushPiPPlacement(); placementWork?.cancel()
         if let spaceMonitor { NSEvent.removeMonitor(spaceMonitor) }
         if let statusClickMonitor { NSEvent.removeMonitor(statusClickMonitor) }
-        reminders.hide(); statusPanel.hide(); pipPanel?.orderOut(nil)
+        reminders.shutdown(); statusPanel.hide(); pipPanel?.orderOut(nil)
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
     }
     private func installApplicationMenu() {
         let root = NSMenu()
-        let appItem = NSMenuItem(title: "坐姿监测", action: nil, keyEquivalent: "")
-        let menu = NSMenu(title: "坐姿监测")
+        let appItem = NSMenuItem(title: "KukuSeat", action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: "KukuSeat")
         let settings = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self; menu.addItem(settings)
         let status = NSMenuItem(title: "显示菜单栏状态", action: #selector(togglePopover), keyEquivalent: "M")
@@ -267,7 +268,7 @@ final class DesktopCoordinator: NSObject, ObservableObject, NSWindowDelegate {
         update.target = updater; menu.addItem(update)
         updater.$canCheck.receive(on: RunLoop.main).sink { update.isEnabled = $0 }.store(in: &subscriptions)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "退出坐姿监测", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "退出 KukuSeat", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = menu; root.addItem(appItem)
         let editItem = NSMenuItem(title: "编辑", action: nil, keyEquivalent: "")
         let edit = NSMenu(title: "编辑")

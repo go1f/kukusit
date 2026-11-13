@@ -1,8 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
-source_app="${1:-$project_root/release/Kukusit.app}"
-destination='/Applications/Kukusit.app'
+source_app="${1:-$project_root/release/KukuSeat.app}"
+destination='/Applications/KukuSeat.app'
 codesign --verify --deep --strict "$source_app"
 if [[ -d "$destination" ]]; then
   mkdir -p "$project_root/.local/installed-backups"

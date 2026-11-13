@@ -1,10 +1,10 @@
-# Kukusit · 坐姿监测
+# KukuSeat · 坐姿监测
 
 使用 MacBook 内置摄像头的本地坐姿监测应用。面向笔记本敞开、外接显示器位于上方的工作情境，不需要外接摄像头或手机。
 
 ## 安装
 
-从 [GitHub Release v0.10.2](https://github.com/go1f/kukusit/releases/tag/v0.10.2) 下载 `Kukusit-0.10.2-macOS-arm64.dmg`，打开 DMG 后把 `Kukusit.app` 拖到 Applications。也提供 ZIP。安装后可从“应用程序”、Spotlight 或 Dock 启动，菜单栏入口继续保留。
+从 [GitHub Release v0.11.0](https://github.com/go1f/kukusit/releases/tag/v0.11.0) 下载 `Kukusit-0.11.0-macOS-arm64.dmg`，打开 DMG 后把 `KukuSeat.app` 拖到 Applications。也提供 ZIP。安装后可从“应用程序”、Spotlight 或 Dock 启动，菜单栏入口继续保留。
 
 发行包包含原生界面、本地 MediaPipe 推理运行时和模型，**无需安装 Python、无需克隆项目，也不需要联网推理**。目标为 Apple Silicon Mac，包括 M5 / macOS 27；当前已在 M2 / macOS 27 验证，尚未在 M5 实机测试。
 
@@ -15,10 +15,10 @@
 ## 日常使用
 
 - 点击菜单栏图标，直接选择“打开监控窗口”，进入以居中视频为主的监控界面。
-- 菜单栏使用坐姿人形图标；坐姿小兽仅保留为版本信息的隐藏彩蛋，不自动展示。
+- 菜单栏使用早期白色实心小灰猫图标；监测时小灰猫作为桌宠显示，可拖动、记住多屏位置。提醒气泡在周围出现，多种异常分别显示；点击小猫或任一气泡收起所有提示并静默 30 秒。右键可隐藏，从菜单栏“显示／隐藏小灰猫”找回。
 - “画中画”打开紧凑的小面板；右上角放大按钮返回主窗口。“更多”菜单控制摄像头、骨架、置顶和大小。
 - 点击齿轮进入独立“设置”窗口。提醒、口部习惯、视频预览、校准与性能分别分组，高级诊断默认隐藏。
-- “视频预览”的镜像设置同时作用于主窗口和 PiP，新安装默认关闭；已有保存选择保留。运行中的 Dock 图标跟随浅色/深色模式采用白底/黑底，Finder 使用透明兼容图标。
+- “视频预览”的镜像设置同时作用于主窗口和 PiP，新安装默认关闭；已有保存选择保留。应用图标使用原图小灰猫加纯白底。
 - 在正常看上方外接屏的舒适姿态下校准 20 秒。经常使用下屏时可以再建立下屏参考。
 - 关闭窗口或收起 PiP 后继续监测；点击“暂停”才释放摄像头。
 
@@ -47,13 +47,13 @@ zsh scripts/create_dmg.sh
 zsh scripts/install_app.sh
 ```
 
-输出为 `release/Kukusit.app` 和可下载的 ZIP。`build_release.sh` 将 Python 运行时冻结到应用内，配置中不保留开发机器的 Python 绝对路径。
+输出为 `release/KukuSeat.app` 和可下载的 ZIP。`build_release.sh` 将 Python 运行时冻结到应用内，配置中不保留开发机器的 Python 绝对路径。
 
 开发界面版本可使用 `zsh scripts/build_app.sh --demo`。实际 Release 包通过以下检查：
 
 ```sh
 swift run --build-system native PostureCoreChecks
-release/Kukusit.app/Contents/MacOS/PostureDiagnostics --bridge-check
+release/KukuSeat.app/Contents/MacOS/PostureDiagnostics --bridge-check
 ```
 
 核心检查无需 XCTest 或完整 Xcode。当前 Swift 6.4 的原生构建参数用于仅有 Command Line Tools 的环境，会提示未来弃用；尚未对其它构建工具版本做保证。
@@ -63,6 +63,8 @@ release/Kukusit.app/Contents/MacOS/PostureDiagnostics --bridge-check
 图像只在本机内存和私有进程管道中处理，不保存照片、录像或上传画面。个人参考保存在应用自己的 Application Support，设置保存在 UserDefaults。源码仓库不上传 `.venv-pose`、本机模型缓存、个人校准及实拍验证记录。
 
 ## 文档
+
+- [v0.11.0 KukuSeat 桌宠提醒](docs/release-v0.11.0.md)
 
 - [v0.10.2 更新下载进度与一次确认安装](docs/release-v0.10.2.md)
 - [v0.10.1 提醒居中与紧凑留白](docs/release-v0.10.1.md)

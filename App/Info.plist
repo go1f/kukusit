@@ -2,14 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
     <key>CFBundleIdentifier</key><string>com.kojyufu.posturediagnostics</string>
-    <key>CFBundleName</key><string>Kukusit · 坐姿监测</string>
-    <key>CFBundleDisplayName</key><string>Kukusit · 坐姿监测</string>
+    <key>CFBundleName</key><string>KukuSeat</string>
+    <key>CFBundleDisplayName</key><string>KukuSeat</string>
     <key>CFBundleExecutable</key><string>PostureDiagnostics</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>Kukusit.icns</string>
-    <key>CFBundleShortVersionString</key><string>0.10.2</string>
-    <key>CFBundleVersion</key><string>20</string>
+    <key>CFBundleShortVersionString</key><string>0.11.0</string>
+    <key>CFBundleVersion</key><string>21</string>
     <key>LSUIElement</key><false/>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
